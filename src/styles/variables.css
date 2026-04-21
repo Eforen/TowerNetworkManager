@@ -1,0 +1,89 @@
+/*
+ * TNI design tokens.
+ * Custom properties consumed by the graph view, palette, inspector, and specs page.
+ * Light and dark variants swap without re-rendering (per visualization.md Theming).
+ */
+
+:root {
+  --tni-font-ui:
+    system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+    sans-serif;
+  --tni-font-mono:
+    ui-monospace, 'JetBrains Mono', 'Fira Code', Menlo, Consolas, monospace;
+
+  --tni-bg: #ffffff;
+  --tni-bg-elevated: #f5f6f8;
+  --tni-fg: #1a1d21;
+  --tni-fg-muted: #5b6370;
+  --tni-border: #d6dae0;
+  --tni-accent: #1a6fd9;
+  --tni-error: #c0392b;
+  --tni-warn: #c97b18;
+  --tni-ok: #2f8c3a;
+
+  --tni-phys: #4a6fa5;
+  --tni-log: #a04a8d;
+  --tni-log-behavior: #c96a3d;
+  --tni-log-usage: #5a9ea8;
+  --tni-log-program: #8b6bd1;
+
+  --tni-edge-nic: #4a6fa5;
+  --tni-edge-owner: #8a8fa0;
+  --tni-edge-route: #2f8c3a;
+  --tni-edge-floor: #b07d00;
+  --tni-edge-rack: #b07d00;
+  --tni-edge-cable-rj45: #3a3f4a;
+  --tni-edge-cable-fiber: #1a6fd9;
+  --tni-edge-uplink: #8a2be2;
+  --tni-edge-insight: #c96a3d;
+  --tni-edge-consumes: #5a9ea8;
+  --tni-edge-provides: #c08030;
+  --tni-edge-install: #8b6bd1;
+
+  --tni-load-green: #2f8c3a;
+  --tni-load-yellow: #c9b318;
+  --tni-load-orange: #c97b18;
+  --tni-load-red: #c0392b;
+
+  --tni-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.1);
+  --tni-shadow-2: 0 6px 20px rgba(0, 0, 0, 0.15);
+
+  --tni-radius: 6px;
+  --tni-radius-lg: 10px;
+}
+
+:root[data-theme='dark'] {
+  --tni-bg: #0e0e10;
+  --tni-bg-elevated: #17181c;
+  --tni-fg: #e6e8ec;
+  --tni-fg-muted: #9aa0aa;
+  --tni-border: #2a2c33;
+
+  --tni-phys: #8fb4ea;
+  --tni-log: #e6a0d4;
+  --tni-log-behavior: #f2a678;
+  --tni-log-usage: #7fd0dd;
+  --tni-log-program: #b8a0f0;
+
+  --tni-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --tni-shadow-2: 0 6px 20px rgba(0, 0, 0, 0.6);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --tni-bg: #0e0e10;
+    --tni-bg-elevated: #17181c;
+    --tni-fg: #e6e8ec;
+    --tni-fg-muted: #9aa0aa;
+    --tni-border: #2a2c33;
+
+    --tni-phys: #8fb4ea;
+    --tni-log: #e6a0d4;
+    --tni-log-behavior: #f2a678;
+    --tni-log-usage: #7fd0dd;
+    --tni-log-program: #b8a0f0;
+
+    --tni-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.5);
+    --tni-shadow-2: 0 6px 20px rgba(0, 0, 0, 0.6);
+  }
+}
