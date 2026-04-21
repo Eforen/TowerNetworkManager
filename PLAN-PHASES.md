@@ -54,7 +54,7 @@ flowchart LR
 ## Phase Checklist
 
 - [x] **Phase 0** - Scaffold
-- [ ] **Phase 1** - Graph data model
+- [x] **Phase 1** - Graph data model
 - [ ] **Phase 2** - File format v1 parser + serializer
 - [ ] **Phase 3** - Project store & persistence
 - [ ] **Phase 4** - App state machine
