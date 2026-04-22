@@ -150,17 +150,28 @@ Deferred (follow-up phases as appropriate): ghost-text preview, Ctrl+R reverse s
 
 **Exit criteria (met)**: backtick opens palette, Tab completes against graph ids / command names, Enter executes, history persists across reloads.
 
-## Phase 6 - Graph visualization (SVG)
+## Phase 6 - Graph visualization (SVG) [x] done
 
 Spec: [docs/specs/visualization.md](docs/specs/visualization.md)
 
-- `view/GraphView.vue` SVG renderer; d3 force config with distances/strengths from `edge.strength`, `alphaDecay=0.05`, `visibilitychange` pause.
-- Node shapes per type; edge color/dash/arrowhead per relation name; labels.
-- Pan/zoom `[0.1, 8]`, double-click fit, keyboard pan/`+/-/f/g`.
-- Hover tooltip (HTML div, viewport-clamped); shift-click multi-select.
-- Floor layout toggle (`forceY` per floor). Canvas fallback scaffolded but disabled until >2000 nodes.
+Delivered:
 
-**Exit criteria**: loading the full example renders a readable, pannable, zoomable graph with labels and tooltips.
+- `src/view/visuals.ts`: per-type node shape/size/fill-family tables and per-relation edge stroke/dash/arrowhead/width tables (data-only, fully unit-tested).
+- `src/view/layout.ts`: `GraphLayout` wraps a d3 `forceSimulation` with link / charge / center / collide / floorY forces, `alphaDecay=0.05`, mode toggle (`force` / `floor`), pause/resume hooks, and position-preserving rebuilds.
+- `src/view/GraphView.vue`: SVG renderer with pan/zoom `[0.1, 8]`, node drag (fx/fy pin while held), hover tooltip (HTML div, viewport-clamped), click -> FSM `clickNode`, shift-click multi-select, directional arrowheads, edge badges for `Consumes`/`Provides` pool/amount, labels fading in above zoom 0.6, HUD with node/edge count and zoom, and `prefers-reduced-motion` honored.
+- `src/store/selectionStore.ts`: Pinia selection store (`selected` set, `hovered`, `isSelected`, `set`/`add`/`toggle`/`clear`).
+- New CSS palette vars for customer / player / floor / rack families; edge color vars aligned between visuals and variables.
+- `App.vue` rebuilt: full-window `GraphView`, compact topbar (counts/project/dirty/selection/FSM), collapsible project drawer with save/load/export/import/seed, keeps canonical text + palette.
+- Keyboard (when graph focused): arrows pan, `+`/`-` zoom, `f` fit, `g` toggle floor layout; `visibilitychange` pauses the simulation.
+
+Deferred (later phases):
+
+- Canvas fallback for >2000 nodes.
+- Bottleneck / server-resource overlays, `inspect` path highlight, `PickingTarget` cursor+banner (phase 11).
+- Accessibility tab-list ordered by id.
+- Animated flow dashes on path edges.
+
+**Exit criteria (met)**: seed demo renders a readable, pannable, zoomable graph with labels and tooltips; shift-click multi-selects; `g` toggles floor layout.
 
 ## Phase 7 - Filters
 

@@ -6,20 +6,22 @@ import {
   useFsmStore,
   useGraphStore,
   useProjectStore,
+  useSelectionStore,
 } from '@/store';
 import { bindGlobalKeys } from '@/fsm';
 import { CommandPalette } from '@/palette';
+import { GraphView } from '@/view';
 
 /**
- * Phase 3 smoke UI: project controls wired to Pinia. Provides visible
- * feedback that `new / save / load / rm / export / import` round-trip
- * through `localStorage` via the TNI v1 format. Goes away once the real
- * command palette + graph view take over (Phases 5–6).
+ * Phase 6 shell: full-window graph view + compact topbar / statusbar.
+ * Project controls collapsed into a drawer; command palette still
+ * drives most day-to-day actions.
  */
 
 const graphStore = useGraphStore();
 const projectStore = useProjectStore();
 const fsmStore = useFsmStore();
+const selection = useSelectionStore();
 
 const fsmLabel = computed(() => {
   const s = fsmStore.state;
@@ -35,6 +37,7 @@ const slugInput = ref('demo');
 const lastMessage = ref<string | null>(null);
 const lastError = ref<string | null>(null);
 const importField = ref('');
+const drawerOpen = ref(false);
 
 const canonicalText = computed(() => graphStore.serializeText());
 
@@ -45,9 +48,7 @@ function flash(msg: string): void {
 
 function fail(err: unknown): void {
   lastError.value =
-    err instanceof StorageError || err instanceof Error
-      ? err.message
-      : String(err);
+    err instanceof StorageError || err instanceof Error ? err.message : String(err);
   lastMessage.value = null;
 }
 
@@ -74,38 +75,18 @@ function seedDemoGraph(): void {
     properties: { deviceAddress: 12345 },
   });
   g.addNode({ type: 'customer', id: 'organic-goat' });
-  g.addEdge({
-    relation: 'FloorAssignment',
-    from: { type: 'floor', id: 'f1' },
-    to: { type: 'rack', id: 'r1' },
-  });
-  g.addEdge({
-    relation: 'RackAssignment',
-    from: { type: 'rack', id: 'r1' },
-    to: { type: 'switch', id: 'sw1' },
-  });
-  g.addEdge({
-    relation: 'RackAssignment',
-    from: { type: 'rack', id: 'r1' },
-    to: { type: 'server', id: 'db01' },
-  });
-  g.addEdge({
-    relation: 'NIC',
-    from: { type: 'switch', id: 'sw1' },
-    to: { type: 'port', id: '@f1/s/1' },
-  });
+  g.addEdge({ relation: 'FloorAssignment', from: { type: 'floor', id: 'f1' }, to: { type: 'rack', id: 'r1' } });
+  g.addEdge({ relation: 'RackAssignment', from: { type: 'rack', id: 'r1' }, to: { type: 'switch', id: 'sw1' } });
+  g.addEdge({ relation: 'RackAssignment', from: { type: 'rack', id: 'r1' }, to: { type: 'server', id: 'db01' } });
+  g.addEdge({ relation: 'NIC', from: { type: 'switch', id: 'sw1' }, to: { type: 'port', id: '@f1/s/1' } });
   g.addEdge({
     relation: 'NetworkCableLinkRJ45',
     from: { type: 'port', id: '@f1/s/1' },
     to: { type: 'port', id: '@f1/c/1' },
   });
-  g.addEdge({
-    relation: 'Owner',
-    from: { type: 'customer', id: 'organic-goat' },
-    to: { type: 'port', id: '@f1/c/1' },
-  });
+  g.addEdge({ relation: 'Owner', from: { type: 'customer', id: 'organic-goat' }, to: { type: 'port', id: '@f1/c/1' } });
   graphStore.graph = g;
-  graphStore.revision++;
+  graphStore.touch();
   projectStore.markDirty();
   flash('Seeded demo graph');
 }
@@ -116,29 +97,20 @@ function onNew(): void {
 function onSave(): void {
   run('save', () => {
     fsmStore.dispatch({ type: 'saveStart' });
-    try {
-      projectStore.save(slugInput.value || undefined);
-    } finally {
-      fsmStore.dispatch({ type: 'saveDone' });
-    }
+    try { projectStore.save(slugInput.value || undefined); }
+    finally { fsmStore.dispatch({ type: 'saveDone' }); }
   });
 }
 function onLoad(): void {
   run(`load ${slugInput.value}`, () => {
     fsmStore.dispatch({ type: 'loadStart' });
-    try {
-      projectStore.load(slugInput.value);
-    } finally {
-      fsmStore.dispatch({ type: 'loadDone' });
-    }
+    try { projectStore.load(slugInput.value); }
+    finally { fsmStore.dispatch({ type: 'loadDone' }); }
   });
 }
 function onRemove(): void {
-  run(`rm ${slugInput.value}`, () =>
-    projectStore.removeProject(slugInput.value),
-  );
+  run(`rm ${slugInput.value}`, () => projectStore.removeProject(slugInput.value));
 }
-
 function onExport(): void {
   run('export', () => {
     const { text, filename } = projectStore.exportCurrent();
@@ -151,7 +123,6 @@ function onExport(): void {
     URL.revokeObjectURL(url);
   });
 }
-
 function onImport(): void {
   run('import', () => projectStore.importText(importField.value));
 }
@@ -161,11 +132,7 @@ let unbindKeys: (() => void) | null = null;
 onMounted(() => {
   try {
     projectStore.hydrate();
-    flash(
-      projectStore.active
-        ? `Restored '${projectStore.active}'`
-        : 'Ready',
-    );
+    flash(projectStore.active ? `Restored '${projectStore.active}'` : 'Ready');
   } catch (err) {
     fail(err);
   } finally {
@@ -186,94 +153,52 @@ onBeforeUnmount(() => {
   <div class="tni-app">
     <header class="tni-topbar">
       <span class="tni-brand">Tower Networking Inc</span>
-      <span class="tni-status">Phase 5 palette · {{ fsmLabel }}</span>
+      <span class="tni-status">
+        <span>{{ graphStore.stats.nodes }}N / {{ graphStore.stats.edges }}E</span>
+        <span v-if="projectStore.active">· {{ projectStore.active }}</span>
+        <span v-if="projectStore.dirty" class="tni-dirty">· unsaved</span>
+        <span class="tni-sel" v-if="selection.count > 0">· sel {{ selection.count }}</span>
+        <span class="tni-fsm">· {{ fsmLabel }}</span>
+      </span>
+      <button class="tni-drawer-toggle" @click="drawerOpen = !drawerOpen">
+        {{ drawerOpen ? 'Hide' : 'Project' }}
+      </button>
     </header>
     <main class="tni-main">
-      <section class="tni-card">
-        <h1>Projects + TNI v1 persistence</h1>
-        <p class="tni-lead">
-          Backed by <code>localStorage</code>. Slug list lives under
-          <code>tni.projects</code>; each project under
-          <code>tni.project.&lt;slug&gt;</code>.
-        </p>
-
+      <GraphView />
+      <aside class="tni-drawer" :class="{ open: drawerOpen }">
+        <h2>Project</h2>
         <div class="tni-row">
           <label class="tni-field">
             <span>Slug</span>
             <input v-model="slugInput" placeholder="demo" />
           </label>
+        </div>
+        <div class="tni-row">
           <button @click="onNew">new</button>
           <button @click="onSave">save</button>
           <button @click="onLoad">load</button>
           <button class="tni-danger" @click="onRemove">rm</button>
+        </div>
+        <div class="tni-row">
           <button @click="onExport">export</button>
           <button @click="seedDemoGraph">seed demo</button>
         </div>
-
-        <dl class="tni-stats">
-          <div>
-            <dt>Active</dt>
-            <dd>{{ projectStore.active ?? '-' }}</dd>
-          </div>
-          <div>
-            <dt>Dirty</dt>
-            <dd :class="{ 'tni-warn': projectStore.dirty }">
-              {{ projectStore.dirty ? 'yes' : 'no' }}
-            </dd>
-          </div>
-          <div>
-            <dt>Slugs</dt>
-            <dd>{{ projectStore.slugs.join(', ') || '-' }}</dd>
-          </div>
-          <div>
-            <dt>Nodes</dt>
-            <dd>{{ graphStore.stats.nodes }}</dd>
-          </div>
-          <div>
-            <dt>Edges</dt>
-            <dd>{{ graphStore.stats.edges }}</dd>
-          </div>
-          <div>
-            <dt>Errors</dt>
-            <dd :class="{ 'tni-ok': graphStore.report.errors.length === 0 }">
-              {{ graphStore.report.errors.length }}
-            </dd>
-          </div>
-          <div>
-            <dt>Size</dt>
-            <dd :class="{ 'tni-warn': projectStore.overQuota }">
-              {{ projectStore.projectSize }} B
-            </dd>
-          </div>
-        </dl>
-
-        <p v-if="lastError" class="tni-msg tni-err">× {{ lastError }}</p>
-        <p v-else-if="lastMessage" class="tni-msg tni-ok">
-          ✓ {{ lastMessage }}
-        </p>
-
+        <p v-if="lastError" class="tni-msg tni-err">x {{ lastError }}</p>
+        <p v-else-if="lastMessage" class="tni-msg tni-ok">ok {{ lastMessage }}</p>
         <details>
-          <summary>Import text (paste TNI v1)</summary>
-          <textarea
-            v-model="importField"
-            rows="6"
-            placeholder="!tni v1&#10;floor f1"
-          ></textarea>
+          <summary>Import text</summary>
+          <textarea v-model="importField" rows="6" placeholder="!tni v1&#10;floor f1"></textarea>
           <button @click="onImport">import</button>
         </details>
-
-        <details>
-          <summary>Canonical text ({{ canonicalText.length }} bytes)</summary>
+        <details open>
+          <summary>Canonical text ({{ canonicalText.length }} B)</summary>
           <pre class="tni-code">{{ canonicalText }}</pre>
         </details>
-
         <p class="tni-hint">
-          Press <kbd>`</kbd> to open the command palette. Try
-          <code>help</code>, <code>add node server db01</code>,
-          <code>tag add server db01 Production</code>,
-          <code>save demo</code>.
+          Press <kbd>`</kbd> for palette. <kbd>f</kbd>/<kbd>g</kbd> fit/floor layout.
         </p>
-      </section>
+      </aside>
     </main>
     <CommandPalette />
   </div>
@@ -284,14 +209,16 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  width: 100vw;
   background: var(--tni-bg);
   color: var(--tni-fg);
   font-family: var(--tni-font-ui);
+  overflow: hidden;
 }
 .tni-topbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 1rem;
   padding: 0.5rem 1rem;
   border-bottom: 1px solid var(--tni-border);
   background: var(--tni-bg-elevated);
@@ -301,65 +228,84 @@ onBeforeUnmount(() => {
   letter-spacing: 0.02em;
 }
 .tni-status {
+  flex: 1;
+  display: flex;
+  gap: 0.5rem;
   font-family: var(--tni-font-mono);
   color: var(--tni-fg-muted);
-  font-size: 0.85rem;
+  font-size: 0.8rem;
+}
+.tni-dirty {
+  color: var(--tni-warn);
+}
+.tni-sel {
+  color: var(--tni-accent);
+}
+.tni-fsm {
+  color: var(--tni-fg-muted);
+}
+.tni-drawer-toggle {
+  padding: 0.3rem 0.75rem;
+  background: var(--tni-bg);
+  color: var(--tni-fg);
+  border: 1px solid var(--tni-border);
+  border-radius: var(--tni-radius);
+  cursor: pointer;
 }
 .tni-main {
   flex: 1;
+  position: relative;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 2rem;
-  overflow: auto;
+  min-height: 0;
+  overflow: hidden;
 }
-.tni-card {
+.tni-drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 22rem;
   background: var(--tni-bg-elevated);
-  border: 1px solid var(--tni-border);
-  border-radius: var(--tni-radius-lg);
-  padding: 1.5rem 2rem;
-  max-width: 56rem;
-  width: 100%;
-  box-shadow: var(--tni-shadow-1);
+  border-left: 1px solid var(--tni-border);
+  padding: 1rem 1.25rem;
+  overflow: auto;
+  transform: translateX(100%);
+  transition: transform 150ms ease;
+  box-shadow: var(--tni-shadow-2);
 }
-.tni-card h1 {
-  margin: 0 0 0.5rem;
-  font-size: 1.25rem;
+.tni-drawer.open {
+  transform: translateX(0);
 }
-.tni-lead {
-  margin: 0 0 1.25rem;
-  color: var(--tni-fg-muted);
-}
-.tni-lead code,
-.tni-code {
-  font-family: var(--tni-font-mono);
-  font-size: 0.9em;
+.tni-drawer h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1rem;
 }
 .tni-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
+  gap: 0.4rem;
+  margin-bottom: 0.75rem;
   align-items: end;
-  margin-bottom: 1rem;
 }
 .tni-field {
   display: flex;
   flex-direction: column;
-  font-size: 0.8rem;
+  font-size: 0.75rem;
   color: var(--tni-fg-muted);
+  flex: 1;
 }
 .tni-field input {
   margin-top: 0.2rem;
-  padding: 0.35rem 0.5rem;
+  padding: 0.3rem 0.5rem;
   background: var(--tni-bg);
   color: var(--tni-fg);
   border: 1px solid var(--tni-border);
   border-radius: var(--tni-radius);
   font-family: var(--tni-font-mono);
-  min-width: 10rem;
+  min-width: 0;
 }
 button {
-  padding: 0.4rem 0.9rem;
+  padding: 0.35rem 0.7rem;
   background: var(--tni-bg);
   color: var(--tni-fg);
   border: 1px solid var(--tni-border);
@@ -374,85 +320,57 @@ button.tni-danger:hover {
   border-color: var(--tni-error);
   color: var(--tni-error);
 }
-.tni-stats {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
-  gap: 0.75rem 1.5rem;
-  margin: 0 0 1rem;
-}
-.tni-stats div {
-  border-left: 2px solid var(--tni-accent);
-  padding-left: 0.75rem;
-}
-.tni-stats dt {
-  font-size: 0.8rem;
-  color: var(--tni-fg-muted);
-}
-.tni-stats dd {
-  margin: 0.1rem 0 0;
-  font-family: var(--tni-font-mono);
-  font-size: 1.05rem;
-  word-break: break-word;
-}
-.tni-stats dd.tni-ok {
-  color: var(--tni-ok);
-}
-.tni-stats dd.tni-warn {
-  color: var(--tni-warn);
-}
 .tni-msg {
-  margin: 0 0 1rem;
+  margin: 0 0 0.75rem;
   font-family: var(--tni-font-mono);
-  font-size: 0.9rem;
+  font-size: 0.8rem;
 }
-.tni-msg.tni-err {
-  color: var(--tni-error);
-}
-.tni-msg.tni-ok {
-  color: var(--tni-ok);
-}
+.tni-msg.tni-err { color: var(--tni-error); }
+.tni-msg.tni-ok  { color: var(--tni-ok); }
 details {
   margin: 0 0 0.75rem;
 }
 summary {
   cursor: pointer;
   color: var(--tni-fg-muted);
-  font-size: 0.9rem;
+  font-size: 0.85rem;
 }
 textarea {
   display: block;
   width: 100%;
-  margin-top: 0.5rem;
-  padding: 0.5rem 0.75rem;
+  margin-top: 0.4rem;
+  padding: 0.4rem 0.6rem;
   background: var(--tni-bg);
   color: var(--tni-fg);
   border: 1px solid var(--tni-border);
   border-radius: var(--tni-radius);
   font-family: var(--tni-font-mono);
-  font-size: 0.85rem;
+  font-size: 0.8rem;
   resize: vertical;
 }
 .tni-code {
   background: var(--tni-bg);
   border: 1px solid var(--tni-border);
   border-radius: var(--tni-radius);
-  padding: 0.75rem 1rem;
-  margin-top: 0.5rem;
-  line-height: 1.45;
+  padding: 0.5rem 0.75rem;
+  margin-top: 0.4rem;
+  line-height: 1.4;
   overflow: auto;
-  max-height: 20rem;
+  max-height: 12rem;
+  font-family: var(--tni-font-mono);
+  font-size: 0.78rem;
 }
 .tni-hint {
   margin: 0.5rem 0 0;
   color: var(--tni-fg-muted);
-  font-size: 0.9rem;
+  font-size: 0.8rem;
 }
 kbd {
   background: var(--tni-bg);
   border: 1px solid var(--tni-border);
   border-radius: 4px;
-  padding: 0 0.35em;
+  padding: 0 0.3em;
   font-family: var(--tni-font-mono);
-  font-size: 0.9em;
+  font-size: 0.85em;
 }
 </style>

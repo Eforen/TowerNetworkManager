@@ -26,6 +26,10 @@
   --tni-log-behavior: #c96a3d;
   --tni-log-usage: #5a9ea8;
   --tni-log-program: #8b6bd1;
+  --tni-customer: #b07d00;
+  --tni-player: #1a6fd9;
+  --tni-floor: #8a8fa0;
+  --tni-rack: #6a6f80;
 
   --tni-edge-nic: #4a6fa5;
   --tni-edge-owner: #8a8fa0;
@@ -64,6 +68,10 @@
   --tni-log-behavior: #f2a678;
   --tni-log-usage: #7fd0dd;
   --tni-log-program: #b8a0f0;
+  --tni-customer: #e6b63c;
+  --tni-player: #7fb0ff;
+  --tni-floor: #6a6f7a;
+  --tni-rack: #4a4f58;
 
   --tni-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.5);
   --tni-shadow-2: 0 6px 20px rgba(0, 0, 0, 0.6);
@@ -82,6 +90,10 @@
     --tni-log-behavior: #f2a678;
     --tni-log-usage: #7fd0dd;
     --tni-log-program: #b8a0f0;
+    --tni-customer: #e6b63c;
+    --tni-player: #7fb0ff;
+    --tni-floor: #6a6f7a;
+    --tni-rack: #4a4f58;
 
     --tni-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.5);
     --tni-shadow-2: 0 6px 20px rgba(0, 0, 0, 0.6);
