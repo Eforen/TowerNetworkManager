@@ -58,7 +58,7 @@ flowchart LR
 - [x] **Phase 2** - File format v1 parser + serializer
 - [x] **Phase 3** - Project store & persistence
 - [x] **Phase 4** - App state machine
-- [ ] **Phase 5** - Command palette + registry
+- [x] **Phase 5** - Command palette + registry
 - [ ] **Phase 6** - Graph visualization (SVG)
 - [ ] **Phase 7** - Filters
 - [ ] **Phase 8** - Inspector + entity editor
@@ -136,16 +136,19 @@ Spec: [docs/specs/statemachine.md](docs/specs/statemachine.md)
 - `tests/fsm/keyboard.test.ts` (6 tests) covers backtick focus-trap, escape always-firing, palette-gated Tab/Enter, unbind.
 - `npm test` 156/156, `npm run lint`, `npm run build` all green.
 
-## Phase 5 - Command palette + registry
+## Phase 5 - Command palette + registry (done)
 
 Specs: [docs/specs/commandline.md](docs/specs/commandline.md), [docs/specs/commands.md](docs/specs/commands.md)
 
-- `commands/registry.ts` with `CommandDef`, `ArgSpec`, `Completer` types verbatim.
-- Tokenizer (quoted-string aware), validator, ghost-text, Tab cycling, history (`tni.cmdhistory`, cap 200), Ctrl+R reverse search.
-- `CommandPalette.vue`: three-row layout (input, completions, status), monospace, `--tni-accent` prompt.
-- Register Phase-1/2/3 commands: `add node`, `rm node`, `mod node`, `rename node`, `add edge`, `rm edge`, `mod edge`, `link`, `unlink`, `tag add/rm/list`, `save`, `load`, `new`, `export`, `import`, `help`, `echo`.
+Delivered:
+- `src/commands/`: `types.ts` (`CommandDef`, `ArgSpec`, `FlagSpec`, `ParsedArgs`, `CommandContext`), `registry.ts` (multi-word name resolution + aliases), `tokenizer.ts` (quote-aware with char ranges and caret locator), `parser.ts` (positional + spaced/inline/repeatable flags, number/floor coercion), `completer.ts` (per-arg-type candidate lookup over `Graph`), `history.ts` (persisted at `tni.cmdhistory`, cap 200, dedupe-consecutive, Up/Down cursor), `executor.ts` (tokenize -> resolve -> parse -> run), `builtins.ts` (add node, rm node, tag add, tag list, echo, help, save, load, new, list projects, rm project, clear history).
+- `src/palette/CommandPalette.vue`: overlay driven by FSM state, `>` prompt, monospace input, completions popup (Tab / Shift+Tab cycle), status line, history walk.
+- Wired into `App.vue`; `graphStore.touch()` added for in-place mutation commands.
+- 47 new tests (tokenizer, registry, parser, completer, history, executor end-to-end); full suite 201/201 green.
 
-**Exit criteria**: backtick opens palette, Tab completes against graph ids, Enter executes, history persists.
+Deferred (follow-up phases as appropriate): ghost-text preview, Ctrl+R reverse search, Ctrl+Enter keep-open, alias management commands, undo/redo stacks (Phase 14), the wider command catalog (edges/programs/behaviors/inspection — their phases), and narrowing `nodeId` completions by the preceding `nodeType` positional.
+
+**Exit criteria (met)**: backtick opens palette, Tab completes against graph ids / command names, Enter executes, history persists across reloads.
 
 ## Phase 6 - Graph visualization (SVG)
 

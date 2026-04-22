@@ -1,17 +1,40 @@
 !tni v1
-customertype casual-dweller name="Casual Dweller"
+#################################
+## Behaviors
+consumerbehavior casual-dweller name="Casual Dweller"
+-> behaviorinsight[online-instant-messaging] :Insight
+-> behaviorinsight[validate-digital-payment] :Insight
+
+## Insights
+behaviorinsight online-instant-messaging name="Online Instant Messaging" bandwidthPerTick=1
+-> usagetype[read-instant-messages] :Consumes
+-> usagetype[post-instant-messages] :Consumes
+behaviorinsight validate-digital-payment name="Validate Digital Payment" bandwidthPerTick=1
+-> usagetype[facilitate-banking] :Consumes
+-> usagetype[authenticate-transaction] :Consumes
+
+behaviorinsight evening-tv name="Evening TV" bandwidthPerTick=40 activeProbability=0.6
+behaviorinsight music name="Background Music" bandwidthPerTick=8
+consumerbehavior casual-home-user name="Casual Home User"
+customer organic-goat
+
+customer[organic-goat] -> consumerbehavior[casual-home-user] :Owner
+consumerbehavior[casual-home-user] -> behaviorinsight[evening-tv] :Insight
+consumerbehavior[casual-home-user] -> behaviorinsight[music] :Insight
+behaviorinsight[evening-tv] -> usagetype[stream-video] :Consumes {required=25}
+behaviorinsight[music] -> usagetype[stream-audio] :Consumes
 #################################
 ## Floors
 floor f1
 customer favorite-bobcat
 customer upset-hamster
-customer organic-goat
-=> port RJ45 52682 dhcp=false :Owner
-=> networkaddress @f1/c/3 :Owner
--> customertype casual-dweller :IsA
 # organic-goat is a Casual Dweller
 # hardware address is 52682
 # network address is @f1/c/3
+customer organic-goat
+=> port RJ45 52682 dhcp=false :Owner
+=> networkaddress @f1/c/3 :Owner
+-> consumerbehavior[casual-dweller] :IsA
 customer[organic-goat].port -> customer[organic-goat].networkaddress :Owner
 floor f2
 customer virtuous-toad
@@ -42,3 +65,60 @@ rack[r1] -> switch[sw1] :RackAssignment
 port[@f1/c/1] -> port[@f1/s/1] :NetworkCableLinkRJ45
 switch[sw1] -> port[@f1/s/1] :NIC
 customer[organic-goat] -> port[@f1/c/1] :Owner
+
+
+
+
+#################################
+## Usage Types
+
+# Core consumer activities
+usagetype read-text
+usagetype view-image
+usagetype stream-audio
+usagetype stream-video
+usagetype stream-voice
+usagetype verify-user
+usagetype authenticate-transaction
+usagetype accept-instruction
+usagetype tunnel-vpn-traffic
+usagetype read-instant-messages
+usagetype post-instant-messages
+usagetype post-text
+usagetype post-image
+usagetype facilitate-banking
+usagetype update-software
+
+# Storage (produced by Padu/Poems-DB style programs)
+usagetype store-text
+usagetype store-image
+usagetype store-audio
+usagetype store-video
+
+# Network infrastructure replies
+usagetype reply-dns-queries
+usagetype reply-dhcp-requests
+
+# Media / comms server acceptors
+usagetype accept-cctv-camera-connection
+usagetype accept-cctv-monitor-connection
+usagetype accept-voip-phone-connection
+usagetype stream-live-video
+
+# Crypto / decentro
+usagetype facilitate-p2p-transaction
+usagetype access-p2p-currency
+
+# Botnet / inspection
+usagetype inspect-user-packets
+usagetype support-bots
+
+
+
+
+
+
+
+
+
+## End of file

@@ -47,7 +47,19 @@ export const useGraphStore = defineStore('graph', () => {
   }
 
   function serializeText(): string {
+    // Touch `revision` so Vue-computed callers re-run after `touch()` /
+    // `parseText()` / `reset()`. Without this, in-place mutations (e.g.
+    // palette `add node`) would leave the cached canonical text stale.
+    void revision.value;
     return serialize(graph.value);
+  }
+
+  /**
+   * Bump `revision` after in-place mutation of `graph.value`. Commands
+   * call this after running so computed getters recompute.
+   */
+  function touch(): void {
+    revision.value++;
   }
 
   return {
@@ -58,6 +70,7 @@ export const useGraphStore = defineStore('graph', () => {
     reset,
     parseText,
     serializeText,
+    touch,
   };
 });
 

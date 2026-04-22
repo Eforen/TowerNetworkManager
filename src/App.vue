@@ -8,6 +8,7 @@ import {
   useProjectStore,
 } from '@/store';
 import { bindGlobalKeys } from '@/fsm';
+import { CommandPalette } from '@/palette';
 
 /**
  * Phase 3 smoke UI: project controls wired to Pinia. Provides visible
@@ -185,7 +186,7 @@ onBeforeUnmount(() => {
   <div class="tni-app">
     <header class="tni-topbar">
       <span class="tni-brand">Tower Networking Inc</span>
-      <span class="tni-status">Phase 4 FSM · {{ fsmLabel }}</span>
+      <span class="tni-status">Phase 5 palette · {{ fsmLabel }}</span>
     </header>
     <main class="tni-main">
       <section class="tni-card">
@@ -267,11 +268,14 @@ onBeforeUnmount(() => {
         </details>
 
         <p class="tni-hint">
-          Press <kbd>`</kbd> to open the command palette (not yet
-          implemented).
+          Press <kbd>`</kbd> to open the command palette. Try
+          <code>help</code>, <code>add node server db01</code>,
+          <code>tag add server db01 Production</code>,
+          <code>save demo</code>.
         </p>
       </section>
     </main>
+    <CommandPalette />
   </div>
 </template>
 
