@@ -1,0 +1,44 @@
+!tni v1
+customertype casual-dweller name="Casual Dweller"
+#################################
+## Floors
+floor f1
+customer favorite-bobcat
+customer upset-hamster
+customer organic-goat
+=> port RJ45 52682 dhcp=false :Owner
+=> networkaddress @f1/c/3 :Owner
+-> customertype casual-dweller :IsA
+# organic-goat is a Casual Dweller
+# hardware address is 52682
+# network address is @f1/c/3
+customer[organic-goat].port -> customer[organic-goat].networkaddress :Owner
+floor f2
+customer virtuous-toad
+customer radiant-penguin
+customer wobbly-giraffe
+floor f3
+customer esteemed-snail
+customer agile-orangutan
+customer frizzy-bandicoot
+customer usable-dragon
+floor f4
+customer posh-mongoose
+floor f5
+customer annual-seahorse
+customer clueless-whale
+
+
+rack r1
+port @f1/c/1 #RJ45 #UserPort deviceAddress=12345
+port @f1/s/1 #RJ45
+switch sw1
+server db01
+customer organic-goat
+
+floor[f1] -> rack[r1] :FloorAssignment
+rack[r1] -> server[db01] :RackAssignment
+rack[r1] -> switch[sw1] :RackAssignment
+port[@f1/c/1] -> port[@f1/s/1] :NetworkCableLinkRJ45
+switch[sw1] -> port[@f1/s/1] :NIC
+customer[organic-goat] -> port[@f1/c/1] :Owner

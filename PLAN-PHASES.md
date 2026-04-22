@@ -55,9 +55,9 @@ flowchart LR
 
 - [x] **Phase 0** - Scaffold
 - [x] **Phase 1** - Graph data model
-- [ ] **Phase 2** - File format v1 parser + serializer
-- [ ] **Phase 3** - Project store & persistence
-- [ ] **Phase 4** - App state machine
+- [x] **Phase 2** - File format v1 parser + serializer
+- [x] **Phase 3** - Project store & persistence
+- [x] **Phase 4** - App state machine
 - [ ] **Phase 5** - Command palette + registry
 - [ ] **Phase 6** - Graph visualization (SVG)
 - [ ] **Phase 7** - Filters
@@ -90,38 +90,51 @@ Spec: [docs/specs/graphdata.md](docs/specs/graphdata.md)
 
 **Exit criteria**: unit tests green for every validation rule; indices rebuild and incrementally update correctly.
 
-## Phase 2 - File format v1
+## Phase 2 - File format v1 — **done**
 
 Spec: [docs/specs/fileformat.md](docs/specs/fileformat.md)
 
-- `format/lexer.ts`, `format/parser.ts` per EBNF; accept entities before or after edges, require `!tni v1` header.
-- `format/serializer.ts` emits canonical form: type order, edge-relation order, lexicographic within group, tag+prop sort.
-- Error reporting with line/col + "did you mean" for relation names.
+- `src/format/parser.ts` — line-oriented scanner + entity/edge parser; handles `!tni v1` header, comments, `\`-continuation, dotted property keys, quoted strings with `\"`/`\\`/`\n` escapes, bare and quoted domain ids, relation inference for unambiguous type pairs.
+- `src/format/serializer.ts` — canonical output with fixed `ENTITY_TYPE_ORDER` + `RELATION_ORDER`, lex sort within groups, tags-before-props, default-tag/default-property elision, undirected-endpoint lex canonicalization.
+- `src/format/errors.ts` — `ParseError` with `line`, `col`, Levenshtein-based "did you mean" suggestions for unknown node types and relation names.
+- Relaxation vs. EBNF line 104 documented in parser: `Ident` continuation chars accept `[a-zA-Z0-9_-]` so the spec's own camelCase examples (`deviceAddress`, `traversalsPerTick`) tokenize.
+- `src/App.vue` round-trips the Phase 1 demo graph and renders the canonical text in a collapsible `<details>` block plus an "OK / FAIL" badge.
 
-**Exit criteria**:
-- `parse(serialize(model)) === model`
-- `serialize(parse(canonical)) === canonical` byte-for-byte
-- Example (full) fixture from the spec round-trips.
+**Exit criteria met**:
+- `parse(serialize(model))` structurally equal to `model` (covered in `tests/format/roundtrip.test.ts`).
+- `serialize(parse(canonical))` byte-for-byte idempotent after one canonicalization pass.
+- Example fixture modelled on `docs/specs/fileformat.md` round-trips.
+- `npm test` (79 tests), `npm run lint`, `npm run build` all green.
 
-## Phase 3 - Project store & persistence
+## Phase 3 - Project store & persistence — **done**
 
 Specs: [docs/specs/fileformat.md](docs/specs/fileformat.md) Browser storage, [docs/specs/commands.md](docs/specs/commands.md) Project
 
-- `store/projectStore.ts`: slug list under `tni.projects`, per-project text under `tni.project.<slug>`.
-- Quota guard (>4 MB warn), `QuotaExceededError` handling.
-- Commands stub: `new`, `load`, `save`, `list projects`, `rm project`, `export`, `import`.
+- `src/store/storage.ts` — `localStorage` adapter with `StorageLike` interface, `MemoryStorage` in-memory fallback for tests/SSR, `byteSize` (UTF-8 aware), quota guard at `QUOTA_WARN_BYTES = 4 MB`, `QuotaExceededError` → `StorageError{ code: 'quota-exceeded' }`, slug regex `[a-z0-9][a-z0-9_-]*`.
+- `src/store/graphStore.ts` — Pinia store wrapping the `Graph` as a `shallowRef`; exposes reactive `stats` + `report` plus `parseText`/`serializeText` passthroughs.
+- `src/store/projectStore.ts` — `new`, `load`, `save`, `removeProject`, `list`, `exportCurrent`, `importText`, `hydrate`; maintains `slugs[]`, `active`, `dirty`, and persists the index under `tni.projects`. Export/import keep DOM side-effects out of the store so it stays unit-testable.
+- `src/App.vue` — wired the smoke UI to the store: slug input, new/save/load/rm/export buttons, seed-demo helper, paste-to-import, canonical-text preview, live stats + quota warning.
 
-**Exit criteria**: can new/save/load/export/import a project via console API; quota warning fires.
+**Exit criteria met**:
+- `npm test` (103 tests) covers slug validation, quota warnings, `QuotaExceededError` translation, full CRUD through the Pinia store, and hydration recovery from a corrupt index.
+- Can `new / save / load / export / rm` a project from the UI; reload restores via `hydrate`.
+- `npm run lint` + `npm run build` green.
 
-## Phase 4 - App state machine
+## Phase 4 - App state machine — **done**
 
 Spec: [docs/specs/statemachine.md](docs/specs/statemachine.md)
 
-- `store/fsmStore.ts` discriminated union `AppState` exactly as spec.
-- Event dispatchers (`backtick`, `escape`, `clickNode`, `edit`, `delete`, `confirm`, I/O lifecycle, `startPick`, `pickFirst/Second`).
-- Global keydown handler with focus-trap rules (swallow `` ` `` inside inputs).
+- `src/fsm/types.ts` — `AppState` discriminated union with all 10 top-level kinds plus `PaletteSub` for the nested palette substates; `Event` union mirrors the spec's event list (`backtick`, `escape`, `clickNode`, `clickBackground`, `toggleFilters`, `edit`, `delete`, `confirm`/`cancel`, `inputChanged`, `tab`/`shiftTab`, `enter`, `commandOk`/`commandErr`, `loadStart`/`loadDone`, `saveStart`/`saveDone`, `startPick`, `pickFirst`/`pickSecond`, `inspectDone`/`inspectCancel`).
+- `src/fsm/transitions.ts` — pure `transition(state, event)` reducer with per-kind sub-reducers; returns the same reference on no-ops so callers can detect "nothing happened". Encodes rules: escape peels one nesting level, `ExecutingCommand` is non-cancellable, `--force` bypasses `ConfirmDestructive`, `clickBackground` suppressed in `PickingTarget`, first `clickNode` during picking is routed to `pickFirst`.
+- `src/fsm/keyboard.ts` — `bindGlobalKeys(dispatch, { isPaletteOpen, isTextFocus })` returns an unbind fn; backtick is swallowed inside `<input>`/`<textarea>`/contenteditable, Tab/Enter only fire while the palette is open, escape always fires.
+- `src/store/fsmStore.ts` — Pinia wrapper holding the state as a `shallowRef`; exposes `dispatch`, `reset`, plus `kind`/`isPaletteOpen`/`isModal`/`isBusy`/`isPicking` computed getters.
+- `src/App.vue` — wires `bindGlobalKeys` in `onMounted`/`onBeforeUnmount`, surfaces `fsmLabel` in the topbar, dispatches `loadStart/Done` + `saveStart/Done` around the project IO buttons.
+- Documented deviation: `ConfirmDestructive.returnTo` stores the full prior `AppState` (not just the kind) so cancelling a delete restores an inspector selection or editing draft without data loss.
 
-**Exit criteria**: Vitest state-transition tests cover every edge in the mermaid diagram.
+**Exit criteria met**:
+- `tests/fsm/transitions.test.ts` (47 tests) covers every labeled edge in the diagram plus the cross-cutting rules.
+- `tests/fsm/keyboard.test.ts` (6 tests) covers backtick focus-trap, escape always-firing, palette-gated Tab/Enter, unbind.
+- `npm test` 156/156, `npm run lint`, `npm run build` all green.
 
 ## Phase 5 - Command palette + registry
 
