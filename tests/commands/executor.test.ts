@@ -100,3 +100,128 @@ describe('executor pipeline', () => {
     if (r.ok) expect(r.message).toContain('add node');
   });
 });
+
+describe('add link', () => {
+  beforeEach(() => setActivePinia(createPinia()));
+
+  async function seed(ctx: CommandContext, registry: CommandRegistry) {
+    await execute('add node customer organic-goat', registry, ctx);
+    await execute('add node port 52682', registry, ctx);
+    await execute('tag add port 52682 UserPort', registry, ctx);
+    await execute('tag add port 52682 RJ45', registry, ctx);
+    await execute('add node networkaddress @f1/c/3', registry, ctx);
+  }
+
+  it('creates an explicit-relation edge in typed-ref form', async () => {
+    const { ctx, registry } = bootstrap();
+    await seed(ctx, registry);
+    const r = await execute(
+      'add link customer[organic-goat] port[52682] Owner',
+      registry,
+      ctx,
+    );
+    expect(r.ok).toBe(true);
+    const edges = [...ctx.graph.edges.values()];
+    expect(edges.length).toBe(1);
+    expect(edges[0].relation).toBe('Owner');
+    expect(edges[0].fromKey).toBe('customer:organic-goat');
+    expect(edges[0].toKey).toBe('port:52682');
+  });
+
+  it('infers the relation when only one pair is legal', async () => {
+    const { ctx, registry } = bootstrap();
+    await seed(ctx, registry);
+    const r = await execute(
+      'add link customer[organic-goat] networkaddress[@f1/c/3]',
+      registry,
+      ctx,
+    );
+    expect(r.ok).toBe(true);
+    const edges = [...ctx.graph.edges.values()];
+    expect(edges.length).toBe(1);
+    expect(edges[0].relation).toBe('AssignedTo');
+    // Auto-flipped: networkaddress -> customer per registry.
+    expect(edges[0].fromKey).toBe('networkaddress:@f1/c/3');
+    expect(edges[0].toKey).toBe('customer:organic-goat');
+  });
+
+  it('auto-flips direction when relation is legal only in the reverse order', async () => {
+    const { ctx, registry } = bootstrap();
+    await seed(ctx, registry);
+    const r = await execute(
+      'add link customer[organic-goat] networkaddress[@f1/c/3] AssignedTo',
+      registry,
+      ctx,
+    );
+    expect(r.ok).toBe(true);
+    const edges = [...ctx.graph.edges.values()];
+    expect(edges[0].fromKey).toBe('networkaddress:@f1/c/3');
+    expect(edges[0].toKey).toBe('customer:organic-goat');
+  });
+
+  it('errors when the pair is ambiguous without a relation', async () => {
+    const { ctx, registry } = bootstrap();
+    await execute('add node domain "example.com"', registry, ctx);
+    await execute('add node usagetype stream-video', registry, ctx);
+    const r = await execute(
+      'add link domain[example.com] usagetype[stream-video]',
+      registry,
+      ctx,
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.message).toMatch(/ambiguous/);
+  });
+
+  it('errors when the relation is invalid for either direction', async () => {
+    const { ctx, registry } = bootstrap();
+    await seed(ctx, registry);
+    const r = await execute(
+      'add link customer[organic-goat] port[52682] AssignedTo',
+      registry,
+      ctx,
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.message).toMatch(/AssignedTo/);
+  });
+
+  it('errors when an endpoint node does not exist', async () => {
+    const { ctx, registry } = bootstrap();
+    await seed(ctx, registry);
+    const r = await execute(
+      'add link customer[organic-goat] port[99999] Owner',
+      registry,
+      ctx,
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.message).toMatch(/no such node/);
+  });
+
+  it('errors when an argument is not a typed-ref', async () => {
+    const { ctx, registry } = bootstrap();
+    await seed(ctx, registry);
+    const r = await execute(
+      'add link organic-goat port[52682] Owner',
+      registry,
+      ctx,
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.message).toMatch(/type\[id\]/);
+  });
+
+  it('accepts edge properties via --prop', async () => {
+    const { ctx, registry } = bootstrap();
+    await execute('add node port 0', registry, ctx);
+    // add_link needs a device port; id `0` is a user-port-shaped id but we
+    // just want any edge with props. Use NIC switch->port edge instead:
+    await execute('add node switch sw1', registry, ctx);
+    await execute('add node port port1', registry, ctx);
+    const r = await execute(
+      'add link switch[sw1] port[port1] NIC --prop mode=trunk',
+      registry,
+      ctx,
+    );
+    expect(r.ok).toBe(true);
+    const edges = [...ctx.graph.edges.values()];
+    expect(edges[0].properties.mode).toBe('trunk');
+  });
+});

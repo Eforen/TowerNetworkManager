@@ -29,13 +29,15 @@ All commands exposed by the palette defined in [commandline.md](commandline.md).
 
 ### Edge mutations
 
-- `add edge <edgeType> <fromId> <toId> [--id=<id>] [--prop <key>=<val>] (repeatable)`
-  - Creates a directed edge (direction per [graphdata.md](graphdata.md)). Endpoints must exist. Type/endpoint validity enforced.
+- `add link <fromType>[<fromId>] <toType>[<toId>] [<Relation>] [--prop <key>=<val>] (repeatable)`
+  - Creates an edge between two existing nodes using file-format typed-ref syntax for the endpoints.
+  - `<Relation>` is optional. When omitted the parser auto-infers it from the type pair; errors if zero or more than one legal relation matches.
+  - Direction auto-flips: if the declared or inferred relation is only legal as `(to, from)`, the stored edge is oriented accordingly (e.g. `add link customer[c1] networkaddress[@a]` yields `networkaddress -> customer :AssignedTo`).
+  - Endpoints must already exist in the graph.
 
-- `rm edge <id> [--force]`
-- `mod edge <id> [--prop <key>=<val>] [--unprop <key>]`
-- `link <fromId> <toId>` — shorthand that picks the single legal edge type between the two endpoint types; errors if zero or more-than-one match.
-- `unlink <fromId> <toId>` — removes edges between the pair; errors if more than one exists unless `--all` passed.
+- `rm link <id> [--force]`
+- `mod link <id> [--prop <key>=<val>] [--unprop <key>]`
+- `unlink <fromType>[<fromId>] <toType>[<toId>]` — removes edges between the pair; errors if more than one exists unless `--all` is passed.
 
 ### Behaviors and capacity
 

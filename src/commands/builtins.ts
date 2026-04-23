@@ -6,7 +6,14 @@
  * from docs/specs/commands.md lands incrementally in later phases.
  */
 
-import { isNodeType, type NodeType } from '@/model';
+import {
+  isNodeType,
+  RELATION_META,
+  RELATION_NAMES,
+  relationsForPair,
+  type NodeType,
+  type RelationName,
+} from '@/model';
 import type { CommandDef, CommandResult } from './types';
 import type { CommandRegistry } from './registry';
 
@@ -59,6 +66,80 @@ const addNode: CommandDef = {
       return {
         ok: true,
         message: `added ${node.type}[${node.id}]`,
+      };
+    } catch (err) {
+      return { ok: false, message: (err as Error).message };
+    }
+  },
+};
+
+const addLink: CommandDef = {
+  name: 'add link',
+  summary:
+    'Create an edge between two nodes: `add link type[id] type[id] [Relation]`',
+  undoable: true,
+  argSpec: [
+    { name: 'from', type: 'string', required: true },
+    { name: 'to', type: 'string', required: true },
+    { name: 'relation', type: 'string' },
+  ],
+  flags: [{ name: 'prop', takesValue: true, repeatable: true }],
+  run(args, ctx): CommandResult {
+    const [rawFrom, rawTo, rawRel] = args.positional;
+    const from = parseTypedRef(String(rawFrom));
+    if (!from.ok) return { ok: false, message: `bad from: ${from.error}` };
+    const to = parseTypedRef(String(rawTo));
+    if (!to.ok) return { ok: false, message: `bad to: ${to.error}` };
+
+    if (!ctx.graph.getNode(from.ref.type, from.ref.id)) {
+      return {
+        ok: false,
+        message: `no such node ${from.ref.type}[${from.ref.id}]`,
+      };
+    }
+    if (!ctx.graph.getNode(to.ref.type, to.ref.id)) {
+      return {
+        ok: false,
+        message: `no such node ${to.ref.type}[${to.ref.id}]`,
+      };
+    }
+
+    let relation: RelationName | undefined;
+    if (rawRel !== undefined) {
+      const word = String(rawRel);
+      if (!(RELATION_NAMES as readonly string[]).includes(word)) {
+        return { ok: false, message: `unknown relation: ${word}` };
+      }
+      relation = word as RelationName;
+    }
+
+    const resolved = resolveLinkDirection(from.ref, to.ref, relation);
+    if (!resolved.ok) return { ok: false, message: resolved.error };
+
+    const properties: Record<string, string | number | boolean> = {};
+    for (const raw of flagList(args.flags.prop).map(String)) {
+      const eq = raw.indexOf('=');
+      if (eq === -1) {
+        return { ok: false, message: `bad --prop (need key=value): ${raw}` };
+      }
+      const k = raw.slice(0, eq);
+      const v = raw.slice(eq + 1);
+      const num = Number(v);
+      properties[k] = Number.isFinite(num) && v.trim() !== '' ? num : v;
+    }
+
+    try {
+      const edge = ctx.graph.addEdge({
+        relation: resolved.relation,
+        from: resolved.from,
+        to: resolved.to,
+        properties,
+      });
+      ctx.graphStore.touch();
+      ctx.projectStore.markDirty();
+      return {
+        ok: true,
+        message: `added ${resolved.from.type}[${resolved.from.id}] -> ${resolved.to.type}[${resolved.to.id}] :${edge.relation}`,
       };
     } catch (err) {
       return { ok: false, message: (err as Error).message };
@@ -262,6 +343,7 @@ const clearHistory: CommandDef = {
 
 export const BUILTIN_COMMANDS: CommandDef[] = [
   addNode,
+  addLink,
   rmNode,
   tagAdd,
   tagList,
@@ -299,4 +381,81 @@ function autoId(graph: { nodes: Map<string, unknown> }, type: NodeType): string 
   let i = 1;
   while (graph.nodes.has(`${type}:${type}${i}`)) i++;
   return `${type}${i}`;
+}
+
+/**
+ * Parse a palette typed-ref token (`type[id]`). Accepts only the exact
+ * shape; whitespace trims to allow quoted tokens like `domain["example.com"]`
+ * (the tokenizer already strips the quotes).
+ */
+export function parseTypedRef(
+  text: string,
+):
+  | { ok: true; ref: { type: NodeType; id: string } }
+  | { ok: false; error: string } {
+  const s = text.trim();
+  const open = s.indexOf('[');
+  const close = s.endsWith(']') ? s.length - 1 : -1;
+  if (open <= 0 || close <= open + 1) {
+    return {
+      ok: false,
+      error: `expected type[id], got ${JSON.stringify(text)}`,
+    };
+  }
+  const type = s.slice(0, open);
+  const id = s.slice(open + 1, close);
+  if (!isNodeType(type)) return { ok: false, error: `unknown node type: ${type}` };
+  if (id.length === 0) return { ok: false, error: `empty id in ${text}` };
+  return { ok: true, ref: { type: type as NodeType, id } };
+}
+
+/**
+ * Pick the legal direction + relation for a link between two nodes.
+ *
+ * If `relation` is specified, tries `(from, to)` then `(to, from)` against
+ * that relation's legal pairs (auto-flip). Without a relation, enumerates
+ * all legal relations in both orders and requires exactly one match.
+ */
+export function resolveLinkDirection(
+  a: { type: NodeType; id: string },
+  b: { type: NodeType; id: string },
+  relation: RelationName | undefined,
+):
+  | {
+      ok: true;
+      relation: RelationName;
+      from: { type: NodeType; id: string };
+      to: { type: NodeType; id: string };
+    }
+  | { ok: false; error: string } {
+  if (relation) {
+    const meta = RELATION_META[relation];
+    const forward = meta.pairs.some(([x, y]) => x === a.type && y === b.type);
+    const backward = meta.pairs.some(([x, y]) => x === b.type && y === a.type);
+    if (forward) return { ok: true, relation, from: a, to: b };
+    if (backward) return { ok: true, relation, from: b, to: a };
+    return {
+      ok: false,
+      error: `:${relation} does not accept ${a.type} <-> ${b.type}`,
+    };
+  }
+  const forward = relationsForPair(a.type, b.type);
+  const backward = relationsForPair(b.type, a.type);
+  const total = forward.length + backward.length;
+  if (total === 0) {
+    return {
+      ok: false,
+      error: `no legal relation between ${a.type} and ${b.type}`,
+    };
+  }
+  if (total > 1) {
+    return {
+      ok: false,
+      error: `ambiguous relation between ${a.type} and ${b.type}; try 'add link ... ${[...forward, ...backward][0]}'`,
+    };
+  }
+  if (forward.length === 1) {
+    return { ok: true, relation: forward[0], from: a, to: b };
+  }
+  return { ok: true, relation: backward[0], from: b, to: a };
 }

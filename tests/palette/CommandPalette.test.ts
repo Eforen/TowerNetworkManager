@@ -209,13 +209,16 @@ describe('CommandPalette – keyboard flow', () => {
     w.unmount();
   });
 
-  it("Tab on 'add ' rewrites to 'add node' (no 'add add node')", async () => {
+  it("Tab on 'add ' rewrites to the first 'add ...' command (no 'add add ...')", async () => {
     const w = makePalette();
     await typeInput(w, 'add ');
     await keydown(w, 'Tab');
     const input = w.find('input.tni-palette__input')
       .element as HTMLInputElement;
-    expect(input.value).toBe('add node');
+    // Candidate list is alphabetical; `add link` sorts before `add node`.
+    // The critical invariant is that the first word is not duplicated.
+    expect(input.value).toBe('add link');
+    expect(input.value.startsWith('add add')).toBe(false);
     w.unmount();
   });
 });

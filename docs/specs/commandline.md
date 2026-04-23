@@ -17,7 +17,7 @@ Pull-down command bar for fast, keyboard-driven operations. Bound to the `Comman
 |     add node server --name=<NAME> --floor=<N>              |  <- ghost/preview (dim)
 +------------------------------------------------------------+
 |  add node      create node                                 |
-|  add edge      create edge                                 |  <- completions popup
+|  add link      create edge                                 |  <- completions popup
 |  add alias     alias command                               |
 +------------------------------------------------------------+
 |  [history: 12/200]  [Tab] complete  [Enter] run  [Esc] close|

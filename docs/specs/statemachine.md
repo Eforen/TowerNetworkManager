@@ -87,7 +87,7 @@ stateDiagram-v2
 - `clickBackground` clears selection and closes `NodeInspectorOpen` but does not close `EditingEntity` or `ConfirmDestructive`.
 - `ExecutingCommand` is non-cancellable for simplicity; long operations show a spinner in the palette. All current commands are synchronous except `save`/`load`/`import`/`export`.
 - `Saving` and `Loading` are top-level states to block conflicting edits; the palette is unavailable while active.
-- Destructive ops (`rm node`, `rm edge`) always route through `ConfirmDestructive` unless invoked with `--force`.
+- Destructive ops (`rm node`, `rm link`) always route through `ConfirmDestructive` unless invoked with `--force`.
 - `PickingTarget` is entered from either `Idle` or `CommandPaletteOpen` (the palette closes). `clickNode` is re-routed to `pickFirst`/`pickSecond`; `clickBackground` is ignored (click-to-deselect is suppressed during picking). `escape` cancels; the banner always shows which endpoint is next.
 - After `pickSecond` the tool runs synchronously; on success the app transitions to `InspectionResult`. `InspectionResult` overlays a result panel but the graph beneath is fully interactive except that `clickNode` opens `NodeInspectorOpen` in addition to keeping the highlight visible (closing the inspector does not clear the highlight).
 - `inspect clear` or `escape` in `InspectionResult` returns to `Idle` and clears `ui.pathHighlight`.
