@@ -26,8 +26,6 @@ customer organic-goat
 => networkaddress @f1/c/3 :AssignedTo
 -> consumerbehavior[casual-dweller] :IsA
 
-
-
 floor f2
 customer virtuous-toad
 customer radiant-penguin

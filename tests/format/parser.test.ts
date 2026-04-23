@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ParseError, parse } from '@/format';
-import { RELATION_META } from '@/model';
+import { RELATION_META, parseNodeKey } from '@/model';
 
 describe('format/parser – header', () => {
   it('requires !tni v1 header', () => {
@@ -238,6 +238,360 @@ describe('format/parser – port syntax', () => {
 
   it('rejects an empty/inverted range', () => {
     expect(() => parse('!tni v1\nport 3-1 RJ45\n')).toThrow(ParseError);
+  });
+});
+
+describe('format/parser – arrow-prefix continuation (`->` / `=>`)', () => {
+  const edgesBy = (
+    graph: import('@/model').Graph,
+    rel: import('@/model').RelationName,
+  ) => [...graph.edges.values()].filter((e) => e.relation === rel);
+
+  const from = (e: import('@/model').Edge) => parseNodeKey(e.fromKey);
+  const to = (e: import('@/model').Edge) => parseNodeKey(e.toKey);
+
+  it('`->` creates an edge from the anchor to an existing entity', () => {
+    const { graph } = parse(
+      [
+        '!tni v1',
+        'customertype casual_dweller',
+        'customer organic-goat',
+        '-> customertype[casual_dweller] :Owner',
+      ].join('\n'),
+    );
+    expect(graph.stats().edges).toBe(1);
+    const owner = edgesBy(graph, 'Owner');
+    expect(owner.length).toBe(1);
+    expect(from(owner[0])).toEqual({ type: 'customer', id: 'organic-goat' });
+    expect(to(owner[0])).toEqual({
+      type: 'customertype',
+      id: 'casual_dweller',
+    });
+  });
+
+  it('`=>` creates a new entity AND the anchor-to-new edge', () => {
+    const { graph } = parse(
+      [
+        '!tni v1',
+        'customer organic-goat',
+        '=> port 52682 RJ45 #UserPort :Owner',
+      ].join('\n'),
+    );
+    expect(graph.getNode('port', '52682')).toBeDefined();
+    const owner = edgesBy(graph, 'Owner');
+    expect(owner.length).toBe(1);
+    expect(from(owner[0])).toEqual({ type: 'customer', id: 'organic-goat' });
+    expect(to(owner[0])).toEqual({ type: 'port', id: '52682' });
+  });
+
+  it('auto-flips direction when relation requires the opposite order', () => {
+    const { graph } = parse(
+      [
+        '!tni v1',
+        'customer organic-goat',
+        '=> networkaddress @f1/c/3 :AssignedTo',
+      ].join('\n'),
+    );
+    const assigned = edgesBy(graph, 'AssignedTo');
+    expect(assigned.length).toBe(1);
+    expect(from(assigned[0])).toEqual({
+      type: 'networkaddress',
+      id: '@f1/c/3',
+    });
+    expect(to(assigned[0])).toEqual({ type: 'customer', id: 'organic-goat' });
+  });
+
+  it('chains multiple arrow lines off the same anchor', () => {
+    const { graph } = parse(
+      [
+        '!tni v1',
+        'customertype casual_dweller',
+        'customer organic-goat',
+        '=> port 52682 RJ45 #UserPort :Owner',
+        '=> networkaddress @f1/c/3 :AssignedTo',
+        '-> customertype[casual_dweller] :Owner',
+      ].join('\n'),
+    );
+    const owner = edgesBy(graph, 'Owner');
+    expect(owner.length).toBe(2);
+    expect(owner.every((e) => from(e).id === 'organic-goat')).toBe(true);
+    expect(edgesBy(graph, 'AssignedTo').length).toBe(1);
+  });
+
+  it('blank lines and comments do NOT change the anchor', () => {
+    const { graph } = parse(
+      [
+        '!tni v1',
+        'customer organic-goat',
+        '',
+        '# still rooted on organic-goat',
+        '=> port 52682 RJ45 #UserPort :Owner',
+      ].join('\n'),
+    );
+    const owner = edgesBy(graph, 'Owner');
+    expect(owner.length).toBe(1);
+    expect(from(owner[0]).id).toBe('organic-goat');
+    expect(to(owner[0])).toEqual({ type: 'port', id: '52682' });
+  });
+
+  it('full-form edge decls do NOT change the anchor', () => {
+    const { graph } = parse(
+      [
+        '!tni v1',
+        'customertype casual_dweller',
+        'customer organic-goat',
+        'customer[organic-goat] -> customertype[casual_dweller] :Owner',
+        '=> port 52682 RJ45 #UserPort :Owner',
+      ].join('\n'),
+    );
+    const owner = edgesBy(graph, 'Owner');
+    expect(owner.length).toBe(2);
+    const tos = owner.map((e) => `${to(e).type}:${to(e).id}`);
+    expect(tos).toEqual(
+      expect.arrayContaining(['customertype:casual_dweller', 'port:52682']),
+    );
+  });
+
+  it('infers the relation when only one pair is legal', () => {
+    const { graph } = parse(
+      ['!tni v1', 'customer organic-goat', '=> networkaddress @f1/c/9'].join(
+        '\n',
+      ),
+    );
+    expect(edgesBy(graph, 'AssignedTo').length).toBe(1);
+  });
+
+  it('range-port anchor points at the last port created', () => {
+    const { graph } = parse(
+      [
+        '!tni v1',
+        'port 0-2 RJ45',
+        'switch sw1',
+        '-> port[port2] :NIC',
+      ].join('\n'),
+    );
+    const nic = edgesBy(graph, 'NIC');
+    expect(nic.length).toBe(1);
+    expect(from(nic[0])).toEqual({ type: 'switch', id: 'sw1' });
+    expect(to(nic[0])).toEqual({ type: 'port', id: 'port2' });
+  });
+
+  it('`->` uses the range-last port as anchor for subsequent arrow lines', () => {
+    const { graph } = parse(
+      [
+        '!tni v1',
+        'switch sw1',
+        'port 0-2 RJ45',
+        '-> switch[sw1] :NIC',
+      ].join('\n'),
+    );
+    const nic = edgesBy(graph, 'NIC');
+    expect(nic.length).toBe(1);
+    expect(from(nic[0])).toEqual({ type: 'switch', id: 'sw1' });
+    expect(to(nic[0])).toEqual({ type: 'port', id: 'port2' });
+  });
+
+  it("errors when `->` has no anchor", () => {
+    expect(() =>
+      parse(['!tni v1', '-> customertype[x] :Owner'].join('\n')),
+    ).toThrow(/no anchor/);
+  });
+
+  it("errors when `=>` has no anchor", () => {
+    expect(() =>
+      parse(['!tni v1', '=> port 0 RJ45'].join('\n')),
+    ).toThrow(/no anchor/);
+  });
+
+  it('errors when the relation is invalid for either direction', () => {
+    expect(() =>
+      parse(
+        [
+          '!tni v1',
+          'customer organic-goat',
+          '=> customer other :AssignedTo',
+        ].join('\n'),
+      ),
+    ).toThrow(/AssignedTo/);
+  });
+
+  it('errors when the pair is ambiguous without a relation', () => {
+    // domain<->usagetype has both Consumes and Provides.
+    expect(() =>
+      parse(
+        [
+          '!tni v1',
+          'domain "example.com"',
+          '=> usagetype stream-video',
+        ].join('\n'),
+      ),
+    ).toThrow(/ambiguous/);
+  });
+});
+
+describe('format/parser – edge-ref selectors (`subj>Type[qual]`)', () => {
+  const edgesBy = (
+    graph: import('@/model').Graph,
+    rel: import('@/model').RelationName,
+  ) => [...graph.edges.values()].filter((e) => e.relation === rel);
+  const from = (e: import('@/model').Edge) => parseNodeKey(e.fromKey);
+  const to = (e: import('@/model').Edge) => parseNodeKey(e.toKey);
+
+  it('resolves the first neighbor of the requested type when no qualifier is given', () => {
+    // LHS selector resolves customer[organic-goat]>port -> port[52682],
+    // then this line creates a cable link from the selected port to port0.
+    const { graph } = parse(
+      [
+        '!tni v1',
+        'customer organic-goat',
+        '=> port 52682 RJ45 #UserPort :Owner',
+        'port 0 RJ45',
+        'customer[organic-goat]>port -> port[port0] :NetworkCableLinkRJ45',
+      ].join('\n'),
+    );
+    const cables = edgesBy(graph, 'NetworkCableLinkRJ45');
+    expect(cables.length).toBe(1);
+    const ids = [from(cables[0]).id, to(cables[0]).id].sort();
+    expect(ids).toEqual(['52682', 'port0']);
+  });
+
+  it('resolves an indexed neighbor with `[N]`', () => {
+    const { graph } = parse(
+      [
+        '!tni v1',
+        'customer organic-goat',
+        '=> port 11111 RJ45 #UserPort :Owner',
+        '=> port 22222 RJ45 #UserPort :Owner',
+        '=> port 33333 RJ45 #UserPort :Owner',
+        'networkaddress @f1/c/1',
+        'networkaddress[@f1/c/1] -> customer[organic-goat]>port[1] :AssignedTo',
+      ].join('\n'),
+    );
+    const assigned = edgesBy(graph, 'AssignedTo');
+    expect(assigned.length).toBe(1);
+    expect(to(assigned[0])).toEqual({ type: 'port', id: '22222' });
+  });
+
+  it('resolves a literal id qualifier `[@addr]`', () => {
+    // Two netaddrs assigned to the same customer. Use the selector to
+    // pick the second one and assign it to a router as well; verify the
+    // new AssignedTo edge came from the right netaddr.
+    const { graph } = parse(
+      [
+        '!tni v1',
+        'customer organic-goat',
+        'networkaddress @f1/c/3',
+        'networkaddress @f1/c/4',
+        'networkaddress[@f1/c/3] -> customer[organic-goat] :AssignedTo',
+        'networkaddress[@f1/c/4] -> customer[organic-goat] :AssignedTo',
+        'router rt1',
+        'customer[organic-goat]>networkaddress[@f1/c/4] -> router[rt1] :AssignedTo',
+      ].join('\n'),
+    );
+    const assigned = edgesBy(graph, 'AssignedTo');
+    expect(assigned.length).toBe(3);
+    const toRouter = assigned.find((e) => to(e).type === 'router')!;
+    expect(from(toRouter)).toEqual({
+      type: 'networkaddress',
+      id: '@f1/c/4',
+    });
+  });
+
+  it("resolves `[#id]` literal form explicitly", () => {
+    // Force literal id matching for a decimal id. port[#0] matches the
+    // port whose id is literally '0' (not index 0 which would be '52682').
+    const { graph } = parse(
+      [
+        '!tni v1',
+        'customer organic-goat',
+        '=> port 52682 RJ45 #UserPort :Owner',
+        '=> port 0 RJ45 #UserPort :Owner',
+        'port 9 RJ45',
+        'customer[organic-goat]>port[#0] -> port[port9] :NetworkCableLinkRJ45',
+      ].join('\n'),
+    );
+    const cables = edgesBy(graph, 'NetworkCableLinkRJ45');
+    expect(cables.length).toBe(1);
+    const ids = [from(cables[0]).id, to(cables[0]).id].sort();
+    expect(ids).toEqual(['0', 'port9']);
+  });
+
+  it('errors when no neighbor of the requested type is reachable', () => {
+    expect(() =>
+      parse(
+        [
+          '!tni v1',
+          'customer organic-goat',
+          'customertype casual_dweller',
+          'customer[organic-goat]>port -> customertype[casual_dweller] :Owner',
+        ].join('\n'),
+      ),
+    ).toThrow(/no port reachable/);
+  });
+
+  it('errors on out-of-range index', () => {
+    expect(() =>
+      parse(
+        [
+          '!tni v1',
+          'customer organic-goat',
+          '=> port 52682 RJ45 #UserPort :Owner',
+          'customertype casual_dweller',
+          'customer[organic-goat]>port[3] -> customertype[casual_dweller] :Owner',
+        ].join('\n'),
+      ),
+    ).toThrow(/out of range/);
+  });
+
+  it('errors when a literal qualifier does not match any neighbor', () => {
+    // Must use `#` to force literal matching of a decimal id (bare digits
+    // are interpreted as an index).
+    expect(() =>
+      parse(
+        [
+          '!tni v1',
+          'customer organic-goat',
+          '=> port 52682 RJ45 #UserPort :Owner',
+          'port 0 RJ45',
+          'customer[organic-goat]>port[#99999] -> port[port0] :NetworkCableLinkRJ45',
+        ].join('\n'),
+      ),
+    ).toThrow(/not found/);
+  });
+
+  it('chains multiple selectors left-to-right', () => {
+    // customer -> port -> port (NetworkCableLink). The final selector
+    // resolves through both edges.
+    const { graph } = parse(
+      [
+        '!tni v1',
+        'customer organic-goat',
+        '=> port 52682 RJ45 #UserPort :Owner',
+        'port 0 RJ45',
+        'port[port0] -> port[52682] :NetworkCableLinkRJ45',
+        'switch sw1',
+        'switch[sw1] -> customer[organic-goat]>port[0]>port :NIC',
+      ].join('\n'),
+    );
+    const nic = edgesBy(graph, 'NIC');
+    expect(nic.length).toBe(1);
+    expect(to(nic[0])).toEqual({ type: 'port', id: 'port0' });
+  });
+
+  it('selectors work on the RHS of `->` arrow lines too', () => {
+    const { graph } = parse(
+      [
+        '!tni v1',
+        'customer organic-goat',
+        '=> port 52682 RJ45 #UserPort :Owner',
+        'switch sw1',
+        '-> customer[organic-goat]>port :NIC',
+      ].join('\n'),
+    );
+    const nic = edgesBy(graph, 'NIC');
+    expect(nic.length).toBe(1);
+    expect(from(nic[0])).toEqual({ type: 'switch', id: 'sw1' });
+    expect(to(nic[0])).toEqual({ type: 'port', id: '52682' });
   });
 });
 

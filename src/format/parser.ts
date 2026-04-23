@@ -65,11 +65,20 @@ export function parseInto(text: string, graph: Graph): void {
     );
   }
 
+  // Track the most recent *entity* declaration so `->` / `=>` prefix lines
+  // can reuse it as the implicit subject. Arrow lines, blank lines, edge
+  // declarations, and comments do not update the anchor.
+  const ctx: ParseContext = { anchor: undefined };
+
   for (const line of lines) {
     const stripped = stripComments(line.text).trim();
     if (stripped.length === 0) continue;
-    parseStatement(stripped, line.srcLine, graph);
+    parseStatement(stripped, line.srcLine, graph, ctx);
   }
+}
+
+interface ParseContext {
+  anchor: { type: NodeType; id: string } | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -104,6 +113,7 @@ function collectLogicalLines(text: string): LogicalLine[] {
 function stripComments(line: string): string {
   let out = '';
   let inQuotes = false;
+  let bracketDepth = 0;
   for (let i = 0; i < line.length; i++) {
     const c = line[i];
     if (c === '"' && line[i - 1] !== '\\') {
@@ -111,7 +121,17 @@ function stripComments(line: string): string {
       out += c;
       continue;
     }
+    if (!inQuotes) {
+      if (c === '[') bracketDepth++;
+      else if (c === ']' && bracketDepth > 0) bracketDepth--;
+    }
     if (!inQuotes && c === '#') {
+      // Inside a typed-ref bracket, `#` is a literal-id selector (`>port[#0]`)
+      // and must NOT start a comment.
+      if (bracketDepth > 0) {
+        out += c;
+        continue;
+      }
       const nxt = line[i + 1];
       if (nxt && /[A-Z]/.test(nxt)) {
         out += c;
@@ -128,20 +148,39 @@ function stripComments(line: string): string {
 // Statement dispatch: entity vs edge.
 // ---------------------------------------------------------------------------
 
-function parseStatement(text: string, srcLine: number, graph: Graph): void {
+function parseStatement(
+  text: string,
+  srcLine: number,
+  graph: Graph,
+  ctx: ParseContext,
+): void {
+  // Arrow-prefix continuation: `->` or `=>` at column 1 after trim.
+  if (text.startsWith('->') && !text.startsWith('->[')) {
+    parseArrowRefLine(text, srcLine, graph, ctx);
+    return;
+  }
+  if (text.startsWith('=>')) {
+    parseArrowEntityLine(text, srcLine, graph, ctx);
+    return;
+  }
   // Edge shape always contains `->`; entity never does.
   if (text.includes('->')) {
     parseEdge(text, srcLine, graph);
-  } else {
-    parseEntity(text, srcLine, graph);
+    return;
   }
+  const created = parseEntity(text, srcLine, graph);
+  ctx.anchor = created;
 }
 
 // ---------------------------------------------------------------------------
 // Entity: <type> <id-or-address> [#Tag ...] [key=value ...]
 // ---------------------------------------------------------------------------
 
-function parseEntity(text: string, srcLine: number, graph: Graph): void {
+function parseEntity(
+  text: string,
+  srcLine: number,
+  graph: Graph,
+): { type: NodeType; id: string } {
   const cur = new Cursor(text, srcLine);
   const typeTok = cur.readWord();
   if (typeTok === undefined) {
@@ -157,8 +196,7 @@ function parseEntity(text: string, srcLine: number, graph: Graph): void {
   const type = typeTok as NodeType;
 
   if (type === 'port') {
-    parsePortEntity(cur, graph);
-    return;
+    return parsePortEntity(cur, graph);
   }
 
   cur.skipSpaces();
@@ -167,6 +205,7 @@ function parseEntity(text: string, srcLine: number, graph: Graph): void {
   const { tags, properties } = readTagsAndProps(cur);
 
   graph.addNode({ type, id, tags, properties });
+  return { type, id };
 }
 
 /**
@@ -189,7 +228,10 @@ const PORT_MEDIA_ALIASES: Record<string, 'RJ45' | 'FiberOptic'> = {
   f: 'FiberOptic',
 };
 
-function parsePortEntity(cur: Cursor, graph: Graph): void {
+function parsePortEntity(
+  cur: Cursor,
+  graph: Graph,
+): { type: NodeType; id: string } {
   cur.skipSpaces();
   const firstDigits = cur.readDigits();
   if (firstDigits === undefined) {
@@ -244,6 +286,7 @@ function parsePortEntity(cur: Cursor, graph: Graph): void {
     );
   }
 
+  let lastId = '';
   for (let n = start; n <= end; n++) {
     const id = isUserPort ? String(n) : `port${n}`;
     graph.addNode({
@@ -252,7 +295,12 @@ function parsePortEntity(cur: Cursor, graph: Graph): void {
       tags: allTags.slice(),
       properties: { ...properties },
     });
+    lastId = id;
   }
+  // Range entities anchor to the last port created; a following `->` / `=>`
+  // line applies to that port. Ranges are rare in practice; this matches
+  // the natural "last line" intuition.
+  return { type: 'port', id: lastId };
 }
 
 // ---------------------------------------------------------------------------
@@ -262,13 +310,13 @@ function parsePortEntity(cur: Cursor, graph: Graph): void {
 function parseEdge(text: string, srcLine: number, graph: Graph): void {
   const cur = new Cursor(text, srcLine);
 
-  const from = readTypedRef(cur);
+  const from = readTypedRef(cur, graph);
   cur.skipSpaces();
   if (!cur.consume('->')) {
     throw new ParseError("expected '->'", cur.loc());
   }
   cur.skipSpaces();
-  const to = readTypedRef(cur);
+  const to = readTypedRef(cur, graph);
 
   cur.skipSpaces();
   let relation: RelationName | undefined;
@@ -326,10 +374,196 @@ function parseEdge(text: string, srcLine: number, graph: Graph): void {
 }
 
 // ---------------------------------------------------------------------------
+// Arrow-prefix lines: `-> TypedRef ...` and `=> EntityDecl ...`
+// ---------------------------------------------------------------------------
+
+function parseArrowRefLine(
+  text: string,
+  srcLine: number,
+  graph: Graph,
+  ctx: ParseContext,
+): void {
+  const cur = new Cursor(text, srcLine);
+  cur.advance(2); // '->'
+  cur.skipSpaces();
+  if (!ctx.anchor) {
+    throw new ParseError(
+      "'-> ...' has no anchor; add an entity declaration above it",
+      cur.loc(),
+    );
+  }
+  const target = readTypedRef(cur, graph);
+  const { relation, properties } = readOptionalRelationAndProps(cur);
+  applyArrowEdge(graph, ctx.anchor, target, relation, properties, cur);
+}
+
+function parseArrowEntityLine(
+  text: string,
+  srcLine: number,
+  graph: Graph,
+  ctx: ParseContext,
+): void {
+  const cur = new Cursor(text, srcLine);
+  cur.advance(2); // '=>'
+  cur.skipSpaces();
+  if (!ctx.anchor) {
+    throw new ParseError(
+      "'=> ...' has no anchor; add an entity declaration above it",
+      cur.loc(),
+    );
+  }
+  // Parse the RHS as an entity declaration. We first split off a trailing
+  // `:RelationName [{props}]` segment because the entity parser stops at
+  // `:`. The simplest safe approach: find the last `:Pascal...` token that
+  // isn't inside braces/quotes, split there.
+  const { entityText, trailer } = splitEntityTrailer(text.slice(2).trimStart());
+  const created = parseEntity(entityText, srcLine, graph);
+
+  const trailCur = new Cursor(trailer, srcLine);
+  const { relation, properties } = readOptionalRelationAndProps(trailCur);
+  applyArrowEdge(graph, ctx.anchor, created, relation, properties, cur);
+}
+
+/**
+ * Split an entity line into its declaration text and any trailing
+ * `:RelationName [{props}]` tokens. Returns the trailer as a string that
+ * can be fed to `readOptionalRelationAndProps` via a fresh Cursor.
+ *
+ * This is safe because entity lines never contain `:` in their normal
+ * tokens (identifiers, tags, props), and `{` / `}` are reserved for edge
+ * props. We respect double-quoted strings so quoted property values
+ * containing `:` don't trip the split.
+ */
+function splitEntityTrailer(text: string): {
+  entityText: string;
+  trailer: string;
+} {
+  let inQuotes = false;
+  let braceDepth = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === '"' && text[i - 1] !== '\\') {
+      inQuotes = !inQuotes;
+      continue;
+    }
+    if (inQuotes) continue;
+    if (c === '{') braceDepth++;
+    else if (c === '}') braceDepth--;
+    else if (c === ':' && braceDepth === 0) {
+      return {
+        entityText: text.slice(0, i).trimEnd(),
+        trailer: text.slice(i),
+      };
+    }
+  }
+  return { entityText: text.trimEnd(), trailer: '' };
+}
+
+function readOptionalRelationAndProps(cur: Cursor): {
+  relation: RelationName | undefined;
+  properties: Record<string, PropertyValue>;
+} {
+  cur.skipSpaces();
+  let relation: RelationName | undefined;
+  if (cur.peek() === ':') {
+    cur.advance(1);
+    const word = cur.readPascalWord();
+    if (!word) {
+      throw new ParseError("expected a relation name after ':'", cur.loc());
+    }
+    if (!(RELATION_NAMES as readonly string[]).includes(word)) {
+      throw new ParseError(
+        `unknown edge type ':${word}'`,
+        cur.startLoc(),
+        suggest(word, RELATION_NAMES),
+      );
+    }
+    relation = word as RelationName;
+  }
+  cur.skipSpaces();
+  const properties = cur.peek() === '{' ? readEdgeProps(cur) : {};
+  return { relation, properties };
+}
+
+/**
+ * Build an edge from an anchor/target pair. For named relations, tries
+ * `(anchor, target)` first; if that order isn't legal, auto-flips to
+ * `(target, anchor)` so users can write `customer => networkaddress
+ * :AssignedTo` without worrying about the canonical direction. For
+ * unnamed relations, inference runs in both orders and must resolve to
+ * exactly one legal relation.
+ */
+function applyArrowEdge(
+  graph: Graph,
+  anchor: { type: NodeType; id: string },
+  target: { type: NodeType; id: string },
+  relation: RelationName | undefined,
+  properties: Record<string, PropertyValue>,
+  cur: Cursor,
+): void {
+  if (relation) {
+    const meta = RELATION_META[relation];
+    const forward = meta.pairs.some(
+      ([a, b]) => a === anchor.type && b === target.type,
+    );
+    const backward = meta.pairs.some(
+      ([a, b]) => a === target.type && b === anchor.type,
+    );
+    if (forward) {
+      graph.addEdge({ relation, from: anchor, to: target, properties });
+      return;
+    }
+    if (backward) {
+      graph.addEdge({ relation, from: target, to: anchor, properties });
+      return;
+    }
+    throw new ParseError(
+      `:${relation} does not accept ${anchor.type} <-> ${target.type}`,
+      cur.startLoc(),
+    );
+  }
+
+  const forward = relationsForPair(anchor.type, target.type);
+  const backward = relationsForPair(target.type, anchor.type);
+  const total = forward.length + backward.length;
+  if (total === 0) {
+    throw new ParseError(
+      `no legal relation between ${anchor.type} and ${target.type}`,
+      cur.startLoc(),
+    );
+  }
+  if (total > 1) {
+    const names = [...forward, ...backward];
+    throw new ParseError(
+      `ambiguous relation between ${anchor.type} and ${target.type}; candidates: ${names.join(', ')}`,
+      cur.startLoc(),
+    );
+  }
+  if (forward.length === 1) {
+    graph.addEdge({
+      relation: forward[0],
+      from: anchor,
+      to: target,
+      properties,
+    });
+  } else {
+    graph.addEdge({
+      relation: backward[0],
+      from: target,
+      to: anchor,
+      properties,
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Sub-parsers
 // ---------------------------------------------------------------------------
 
-function readTypedRef(cur: Cursor): { type: NodeType; id: string } {
+function readTypedRef(
+  cur: Cursor,
+  graph?: Graph,
+): { type: NodeType; id: string } {
   const typeTok = cur.readWord();
   if (typeTok === undefined) {
     throw new ParseError('expected a node type', cur.loc());
@@ -349,7 +583,136 @@ function readTypedRef(cur: Cursor): { type: NodeType; id: string } {
   if (!cur.consume(']')) {
     throw new ParseError("expected ']'", cur.loc());
   }
-  return { type, id };
+
+  let current: { type: NodeType; id: string } = { type, id };
+  while (cur.peek() === '>') {
+    cur.advance(1);
+    current = readSelectorSegment(cur, current, graph);
+  }
+  return current;
+}
+
+/**
+ * Edge-ref selector: after a TypedRef, a `>Type[qual]` segment resolves
+ * to a neighbor of the subject along an edge that links the two types.
+ *
+ * Qualifier forms (inside `[...]`):
+ *   - bare integer   -> 0-based index into the ordered candidate list
+ *   - `#<id>`        -> literal id match (use when the id is a decimal)
+ *   - `<id>` / `@..` -> literal id match (ids starting with `@` or non-digit)
+ * Missing `[...]` is equivalent to `[0]` (first match).
+ */
+function readSelectorSegment(
+  cur: Cursor,
+  subject: { type: NodeType; id: string },
+  graph: Graph | undefined,
+): { type: NodeType; id: string } {
+  if (!graph) {
+    throw new ParseError(
+      'edge-ref selectors are not allowed here',
+      cur.loc(),
+    );
+  }
+  const segTypeTok = cur.readWord();
+  if (segTypeTok === undefined) {
+    throw new ParseError("expected a node type after '>'", cur.loc());
+  }
+  if (!(NODE_TYPES as readonly string[]).includes(segTypeTok)) {
+    throw new ParseError(
+      `unknown node type '${segTypeTok}'`,
+      cur.startLoc(),
+      suggest(segTypeTok, NODE_TYPES),
+    );
+  }
+  const segType = segTypeTok as NodeType;
+
+  let qualifier: Qualifier = { kind: 'index', n: 0 };
+  if (cur.peek() === '[') {
+    cur.advance(1);
+    cur.skipSpaces();
+    qualifier = readQualifier(cur, segType);
+    cur.skipSpaces();
+    if (!cur.consume(']')) {
+      throw new ParseError("expected ']'", cur.loc());
+    }
+  }
+
+  return resolveSelector(graph, subject, segType, qualifier, cur);
+}
+
+type Qualifier =
+  | { kind: 'index'; n: number }
+  | { kind: 'literal'; id: string };
+
+function readQualifier(cur: Cursor, segType: NodeType): Qualifier {
+  if (cur.peek() === '#') {
+    cur.advance(1);
+    const id = readIdentity(cur, segType);
+    return { kind: 'literal', id };
+  }
+  // Heuristic: a bare run of digits followed by `]` is an index.
+  // Anything else (letters, `@`, `"`) is a literal id.
+  const save = cur.pos;
+  const digits = cur.readDigits();
+  if (digits !== undefined) {
+    cur.skipSpaces();
+    if (cur.peek() === ']') {
+      return { kind: 'index', n: Number(digits) };
+    }
+    cur.pos = save;
+  }
+  const id = readIdentity(cur, segType);
+  return { kind: 'literal', id };
+}
+
+function resolveSelector(
+  graph: Graph,
+  subject: { type: NodeType; id: string },
+  segType: NodeType,
+  qualifier: Qualifier,
+  cur: Cursor,
+): { type: NodeType; id: string } {
+  // All edges incident to the subject, in insertion order, whose other
+  // endpoint is of the requested type.
+  const candidates: { type: NodeType; id: string }[] = [];
+  const edges = graph.edgesOf(subject.type, subject.id);
+  const subjectKey = `${subject.type}:${subject.id}`;
+  for (const e of edges) {
+    const other = e.fromKey === subjectKey ? e.toKey : e.fromKey;
+    const parsed = parseNodeKeyLike(other);
+    if (parsed.type === segType) candidates.push(parsed);
+  }
+  if (candidates.length === 0) {
+    throw new ParseError(
+      `no ${segType} reachable from ${subject.type}[${subject.id}]`,
+      cur.startLoc(),
+    );
+  }
+  if (qualifier.kind === 'index') {
+    const hit = candidates[qualifier.n];
+    if (!hit) {
+      throw new ParseError(
+        `${subject.type}[${subject.id}]>${segType}[${qualifier.n}] is out of range (have ${candidates.length})`,
+        cur.startLoc(),
+      );
+    }
+    return hit;
+  }
+  const hit = candidates.find((c) => c.id === qualifier.id);
+  if (!hit) {
+    throw new ParseError(
+      `${subject.type}[${subject.id}]>${segType}[${qualifier.id}] not found`,
+      cur.startLoc(),
+    );
+  }
+  return hit;
+}
+
+/** Parse a `type:id` key string. Duplicates `parseNodeKey` locally so we
+ * don't have to re-import it in this module. */
+function parseNodeKeyLike(key: string): { type: NodeType; id: string } {
+  const idx = key.indexOf(':');
+  return { type: key.slice(0, idx) as NodeType, id: key.slice(idx + 1) };
 }
 
 function readIdentity(cur: Cursor, type: NodeType): string {
