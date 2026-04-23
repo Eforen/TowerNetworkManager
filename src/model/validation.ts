@@ -8,7 +8,13 @@
  */
 
 import { Graph } from './graph';
-import { NET_ADDR_RE, isNetAddrType, parseNodeKey } from './ids';
+import {
+  HARDWARE_ADDR_RE,
+  NET_ADDR_RE,
+  PORT_SLUG_RE,
+  isNetAddrType,
+  parseNodeKey,
+} from './ids';
 import { RELATION_META } from './relations';
 import { CANONICAL_TAGS, type Edge, type Node } from './types';
 
@@ -36,10 +42,13 @@ export function validate(graph: Graph): ValidationReport {
   }
 
   validateNetAddressUniqueness(graph, errors);
+  validatePortConnectivity(graph, warnings);
 
   for (const edge of graph.edges.values()) {
     validateEdge(graph, edge, errors);
   }
+
+  validateAssignedToUniqueness(graph, errors);
 
   return { errors, warnings };
 }
@@ -57,9 +66,11 @@ function validateNode(
     checkNonNegativeInt(node, 'memoryTotal', errors);
     checkNonNegativeInt(node, 'storageTotal', errors);
     checkNonNegativeInt(node, 'traversalsPerTick', errors);
+    checkHardwareAddress(node, errors);
   }
   if (node.type === 'switch' || node.type === 'router') {
     checkNonNegativeInt(node, 'traversalsPerTick', errors);
+    checkHardwareAddress(node, errors);
   }
   if (node.type === 'program') {
     for (const key of ['cpu', 'memory', 'storage']) {
@@ -141,6 +152,44 @@ function validateNode(
       });
     }
   }
+
+  // Port id shape depends on UserPort-ness.
+  if (node.type === 'port') {
+    const isUser = node.tags.includes('UserPort');
+    if (isUser) {
+      if (!HARDWARE_ADDR_RE.test(node.id)) {
+        errors.push({
+          severity: 'error',
+          code: 'port.userIdNotHardware',
+          message: `UserPort port[${node.id}] id must be a 1..5 digit hardware address`,
+          nodeKey: key,
+        });
+      }
+    } else {
+      if (!PORT_SLUG_RE.test(node.id)) {
+        errors.push({
+          severity: 'error',
+          code: 'port.deviceIdMalformed',
+          message: `device port[${node.id}] id must be 'port' + digits (e.g. port0, port1)`,
+          nodeKey: key,
+        });
+      }
+    }
+  }
+}
+
+function checkHardwareAddress(node: Node, errors: ValidationIssue[]): void {
+  const v = node.properties['hardwareAddress'];
+  if (v === undefined) return;
+  const s = String(v);
+  if (!HARDWARE_ADDR_RE.test(s)) {
+    errors.push({
+      severity: 'error',
+      code: 'device.badHardwareAddress',
+      message: `${node.type}[${node.id}].hardwareAddress must be 1..5 numeric digits`,
+      nodeKey: `${node.type}:${node.id}`,
+    });
+  }
 }
 
 function validateEdge(
@@ -188,6 +237,14 @@ function validateEdge(
           severity: 'error',
           code: 'nic.targetNotPort',
           message: `NIC target ${to.type}[${to.id}] must carry tag NetworkPort`,
+          edgeId: edge.id,
+        });
+      }
+      if (to.tags.includes('UserPort')) {
+        errors.push({
+          severity: 'error',
+          code: 'nic.targetIsUserPort',
+          message: `NIC target ${to.type}[${to.id}] is a UserPort; NIC connects device-side ports only`,
           edgeId: edge.id,
         });
       }
@@ -393,6 +450,77 @@ function validateNetAddressUniqueness(
       });
     } else {
       seen.set(node.id, key);
+    }
+  }
+}
+
+/**
+ * Warn on ports that are "dangling":
+ *   - non-UserPort devices ports without a `NIC` edge from any device, and
+ *   - UserPorts without any `NetworkCableLink*` edge (customer has no patch).
+ */
+function validatePortConnectivity(
+  graph: Graph,
+  warnings: ValidationIssue[],
+): void {
+  for (const [key, node] of graph.nodes) {
+    if (node.type !== 'port') continue;
+    const isUser = node.tags.includes('UserPort');
+    let hasNic = false;
+    let hasCable = false;
+    for (const edge of graph.edgesOf(node.type, node.id)) {
+      if (edge.relation === 'NIC' && edge.toKey === key) hasNic = true;
+      if (
+        edge.relation === 'NetworkCableLinkRJ45' ||
+        edge.relation === 'NetworkCableLinkFiber'
+      ) {
+        hasCable = true;
+      }
+    }
+    if (isUser && !hasCable) {
+      warnings.push({
+        severity: 'warning',
+        code: 'port.userUncabled',
+        message: `UserPort port[${node.id}] has no NetworkCableLink* edge`,
+        nodeKey: key,
+      });
+    }
+    if (!isUser && !hasNic) {
+      warnings.push({
+        severity: 'warning',
+        code: 'port.deviceNoNic',
+        message: `port[${node.id}] has no NIC edge from a device`,
+        nodeKey: key,
+      });
+    }
+  }
+}
+
+/**
+ * A `networkaddress` can only be assigned to one holder at a time — declaring
+ * two `AssignedTo` edges from the same address is an error.
+ */
+function validateAssignedToUniqueness(
+  graph: Graph,
+  errors: ValidationIssue[],
+): void {
+  const fromCount = new Map<string, string[]>();
+  for (const edge of graph.edges.values()) {
+    if (edge.relation !== 'AssignedTo') continue;
+    const list = fromCount.get(edge.fromKey) ?? [];
+    list.push(edge.id);
+    fromCount.set(edge.fromKey, list);
+  }
+  for (const [fromKey, ids] of fromCount) {
+    if (ids.length > 1) {
+      for (const edgeId of ids) {
+        errors.push({
+          severity: 'error',
+          code: 'assignedTo.duplicate',
+          message: `networkaddress ${fromKey} has ${ids.length} AssignedTo edges; only one allowed`,
+          edgeId,
+        });
+      }
     }
   }
 }

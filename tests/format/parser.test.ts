@@ -31,9 +31,9 @@ describe('format/parser – entities', () => {
 
   it('parses tags and properties on an entity', () => {
     const { graph } = parse(
-      '!tni v1\nport @f1/c/1 #RJ45 #UserPort deviceAddress=12345\n',
+      '!tni v1\nport 12345 RJ45 #UserPort deviceAddress=12345\n',
     );
-    const port = graph.getNode('port', '@f1/c/1');
+    const port = graph.getNode('port', '12345');
     expect(port?.tags).toEqual(
       expect.arrayContaining(['RJ45', 'UserPort', 'Physical', 'NetworkPort']),
     );
@@ -99,8 +99,8 @@ describe('format/parser – edges', () => {
       [
         '!tni v1',
         'switch sw1',
-        'port @f1/s/1',
-        'switch[sw1] -> port[@f1/s/1]',
+        'port 0 RJ45',
+        'switch[sw1] -> port[port0]',
       ].join('\n'),
     );
     const edges = [...graph.edges.values()];
@@ -111,17 +111,17 @@ describe('format/parser – edges', () => {
   it('errors on ambiguous relations and requires an explicit :Relation', () => {
     const ambiguous = [
       '!tni v1',
-      'port @f1/s/1',
-      'port @f1/c/1',
-      'port[@f1/s/1] -> port[@f1/c/1]',
+      'port 0 F',
+      'port 1 F',
+      'port[port0] -> port[port1]',
     ].join('\n');
     expect(() => parse(ambiguous)).toThrow(ParseError);
 
     const explicit = [
       '!tni v1',
-      'port @f1/s/1',
-      'port @f1/c/1',
-      'port[@f1/s/1] -> port[@f1/c/1] :NetworkCableLinkFiber',
+      'port 0 F',
+      'port 1 F',
+      'port[port0] -> port[port1] :NetworkCableLinkFiber',
     ].join('\n');
     expect(() => parse(explicit)).not.toThrow();
   });
@@ -131,8 +131,8 @@ describe('format/parser – edges', () => {
       [
         '!tni v1',
         'customer alice',
-        'port @f1/c/1',
-        'customer[alice] -> port[@f1/c/1] :Owner',
+        'port 12345 RJ45 #UserPort',
+        'customer[alice] -> port[12345] :Owner',
         '',
         'program database',
         'server db01',
@@ -147,7 +147,7 @@ describe('format/parser – edges', () => {
 
   it('rejects unknown relations with a suggestion', () => {
     const text =
-      '!tni v1\ncustomer alice\nport @f1/c/1\ncustomer[alice] -> port[@f1/c/1] :Ownner\n';
+      '!tni v1\ncustomer alice\nport 12345 RJ45 #UserPort\ncustomer[alice] -> port[12345] :Ownner\n';
     try {
       parse(text);
       throw new Error('expected ParseError');
@@ -169,10 +169,75 @@ describe('format/parser – edges', () => {
 
   it('honors line continuation with trailing backslash', () => {
     const { graph } = parse(
-      ['!tni v1', 'port @f1/c/1 #RJ45 \\', '  deviceAddress=1'].join('\n'),
+      ['!tni v1', 'port 12345 RJ45 #UserPort \\', '  deviceAddress=1'].join('\n'),
     );
-    const p = graph.getNode('port', '@f1/c/1');
+    const p = graph.getNode('port', '12345');
     expect(p?.properties.deviceAddress).toBe(1);
+  });
+});
+
+describe('format/parser – port syntax', () => {
+  it('parses the positional media keyword (long form)', () => {
+    const { graph } = parse('!tni v1\nport 0 RJ45\n');
+    const p = graph.getNode('port', 'port0');
+    expect(p).toBeDefined();
+    expect(p?.tags).toEqual(expect.arrayContaining(['RJ45']));
+  });
+
+  it('accepts short media aliases RJ and F', () => {
+    const { graph } = parse('!tni v1\nport 0 RJ\nport 1 F\n');
+    expect(graph.getNode('port', 'port0')?.tags).toEqual(
+      expect.arrayContaining(['RJ45']),
+    );
+    expect(graph.getNode('port', 'port1')?.tags).toEqual(
+      expect.arrayContaining(['FiberOptic']),
+    );
+  });
+
+  it('accepts FIBER and FiberOptic as fiber aliases', () => {
+    const { graph } = parse('!tni v1\nport 0 FIBER\nport 1 FiberOptic\n');
+    expect(graph.getNode('port', 'port0')?.tags).toEqual(
+      expect.arrayContaining(['FiberOptic']),
+    );
+    expect(graph.getNode('port', 'port1')?.tags).toEqual(
+      expect.arrayContaining(['FiberOptic']),
+    );
+  });
+
+  it('expands a range into one port per number (inclusive)', () => {
+    const { graph } = parse('!tni v1\nport 0-2 RJ45\n');
+    expect(graph.getNode('port', 'port0')).toBeDefined();
+    expect(graph.getNode('port', 'port1')).toBeDefined();
+    expect(graph.getNode('port', 'port2')).toBeDefined();
+    expect(graph.getNode('port', 'port3')).toBeUndefined();
+  });
+
+  it('stores UserPort ids as bare hardware digits', () => {
+    const { graph } = parse('!tni v1\nport 52682 RJ45 #UserPort\n');
+    expect(graph.getNode('port', '52682')).toBeDefined();
+    expect(graph.getNode('port', 'port52682')).toBeUndefined();
+  });
+
+  it('rejects range syntax on UserPort lines', () => {
+    expect(() => parse('!tni v1\nport 0-2 RJ45 #UserPort\n')).toThrow(
+      ParseError,
+    );
+  });
+
+  it('rejects unknown media keywords', () => {
+    expect(() => parse('!tni v1\nport 0 COAX\n')).toThrow(ParseError);
+  });
+
+  it('rejects the legacy `port port0 #RJ45` form', () => {
+    expect(() => parse('!tni v1\nport port0 #RJ45\n')).toThrow(ParseError);
+  });
+
+  it('rejects a missing media keyword', () => {
+    expect(() => parse('!tni v1\nport 0\n')).toThrow(ParseError);
+  });
+
+  it('rejects an empty/inverted range', () => {
+    expect(() => parse('!tni v1\nport 3-1 RJ45\n')).toThrow(ParseError);
   });
 });
 

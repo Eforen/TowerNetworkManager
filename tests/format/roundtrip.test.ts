@@ -9,8 +9,8 @@ rack r1 floor=f1
 switch sw1
 server db01 address=10.0.0.5
 
-port @f1/s/1 #RJ45
-port @f1/c/1 #RJ45 #UserPort deviceAddress=12345
+port 0 RJ45
+port 12345 RJ45 #UserPort
 
 customertype casual label="Casual Dweller"
 customer organic-goat customertype=casual
@@ -26,9 +26,9 @@ program media-store pool.provide.main=16
 floor[f1] -> rack[r1] :FloorAssignment
 rack[r1] -> switch[sw1] :RackAssignment
 rack[r1] -> server[db01] :RackAssignment
-switch[sw1] -> port[@f1/s/1] :NIC
-port[@f1/s/1] -> port[@f1/c/1] :NetworkCableLinkRJ45
-customer[organic-goat] -> port[@f1/c/1] :Owner
+switch[sw1] -> port[port0] :NIC
+port[port0] -> port[12345] :NetworkCableLinkRJ45
+customer[organic-goat] -> port[12345] :Owner
 
 server[db01] -> program[database] :Install {amount=2}
 `;

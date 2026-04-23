@@ -71,17 +71,17 @@ describe('format/serializer – header and layout', () => {
 
   it('sorts undirected cable endpoints in lex order', () => {
     const g = new Graph();
-    g.addNode({ type: 'port', id: '@f1/c/1' });
-    g.addNode({ type: 'port', id: '@f1/s/1' });
+    g.addNode({ type: 'port', id: 'port0' });
+    g.addNode({ type: 'port', id: 'port1' });
     g.addEdge({
       relation: 'NetworkCableLinkRJ45',
-      from: { type: 'port', id: '@f1/s/1' },
-      to: { type: 'port', id: '@f1/c/1' },
+      from: { type: 'port', id: 'port1' },
+      to: { type: 'port', id: 'port0' },
     });
     const out = serialize(g);
     const line = out.split('\n').find((l) => l.includes(':NetworkCableLinkRJ45'));
     expect(line).toBeDefined();
-    expect(line!.indexOf('@f1/c/1')).toBeLessThan(line!.indexOf('@f1/s/1'));
+    expect(line!.indexOf('port0')).toBeLessThan(line!.indexOf('port1'));
   });
 });
 
@@ -95,17 +95,25 @@ describe('format/serializer – node formatting', () => {
     expect(line).not.toMatch(/#Physical|#Device|#Network|#Switch/);
   });
 
-  it('keeps non-default tags sorted before properties', () => {
+  it('serializes UserPort with positional media and remaining tags', () => {
     const g = new Graph();
     g.addNode({
       type: 'port',
-      id: '@f1/c/1',
+      id: '12345',
       tags: ['UserPort', 'RJ45'],
       properties: { deviceAddress: 12345 },
     });
     const out = serialize(g);
     const line = out.split('\n').find((l) => l.startsWith('port '));
-    expect(line).toBe('port @f1/c/1 #RJ45 #UserPort deviceAddress=12345');
+    expect(line).toBe('port 12345 RJ45 #UserPort deviceAddress=12345');
+  });
+
+  it('serializes a device port with the positional media keyword', () => {
+    const g = new Graph();
+    g.addNode({ type: 'port', id: 'port7', tags: ['FiberOptic'] });
+    const out = serialize(g);
+    const line = out.split('\n').find((l) => l.startsWith('port '));
+    expect(line).toBe('port 7 FiberOptic');
   });
 
   it('quotes strings with spaces or special chars', () => {

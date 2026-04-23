@@ -62,7 +62,7 @@ describe('validation: tags', () => {
 
   it('errors when port has no media tag', () => {
     const g = new Graph();
-    g.addNode({ type: 'port', id: '@f1/c/1' });
+    g.addNode({ type: 'port', id: 'port0' });
     expect(codes(validate(g))).toContain('port.noMedia');
   });
 
@@ -70,19 +70,24 @@ describe('validation: tags', () => {
     const g = new Graph();
     g.addNode({
       type: 'port',
-      id: '@f1/c/1',
+      id: 'port0',
       tags: ['RJ45', 'FiberOptic'],
     });
     expect(codes(validate(g))).toContain('port.dualMedia');
   });
 });
 
-describe('validation: network address uniqueness', () => {
-  it('errors when port + uplink share the same address', () => {
+describe('validation: network address format', () => {
+  it('accepts a valid networkaddress node', () => {
     const g = new Graph();
-    g.addNode({ type: 'port', id: '@f1/u/1', tags: ['RJ45'] });
-    g.addNode({ type: 'uplink', id: '@f1/u/1', tags: ['RJ45'] });
-    expect(codes(validate(g))).toContain('netAddr.duplicate');
+    g.addNode({ type: 'networkaddress', id: '@f1/u/1' });
+    expect(codes(validate(g))).not.toContain('netAddr.invalid');
+  });
+
+  it('accepts an uplink with a 4-letter id', () => {
+    const g = new Graph();
+    g.addNode({ type: 'uplink', id: 'comc', tags: ['RJ45'] });
+    expect(codes(validate(g))).not.toContain('netAddr.invalid');
   });
 });
 
@@ -90,28 +95,24 @@ describe('validation: edge endpoint rules', () => {
   it('NIC target must carry NetworkPort tag', () => {
     const g = new Graph();
     g.addNode({ type: 'server', id: 'db01' });
-    g.addNode({ type: 'port', id: '@f1/s/1', tags: ['RJ45'] });
-    // Strip NetworkPort tag to simulate a bad target
-    g.updateNode('port', '@f1/s/1', { tags: ['RJ45'] });
-    // Default tags always include NetworkPort; re-adding explicit tags keeps them.
-    // The mergeDefaultTags helper always includes NetworkPort for ports.
+    g.addNode({ type: 'port', id: 'port0', tags: ['RJ45'] });
+    g.updateNode('port', 'port0', { tags: ['RJ45'] });
     g.addEdge({
       relation: 'NIC',
       from: { type: 'server', id: 'db01' },
-      to: { type: 'port', id: '@f1/s/1' },
+      to: { type: 'port', id: 'port0' },
     });
-    // Default tags preserved, so this should not trigger the error.
     expect(codes(validate(g))).not.toContain('nic.targetNotPort');
   });
 
   it('rejects NetworkCableLinkRJ45 between RJ45 and FiberOptic ports', () => {
     const g = new Graph();
-    g.addNode({ type: 'port', id: '@f1/c/1', tags: ['RJ45'] });
-    g.addNode({ type: 'port', id: '@f1/c/2', tags: ['FiberOptic'] });
+    g.addNode({ type: 'port', id: 'port0', tags: ['RJ45'] });
+    g.addNode({ type: 'port', id: 'port1', tags: ['FiberOptic'] });
     g.addEdge({
       relation: 'NetworkCableLinkRJ45',
-      from: { type: 'port', id: '@f1/c/1' },
-      to: { type: 'port', id: '@f1/c/2' },
+      from: { type: 'port', id: 'port0' },
+      to: { type: 'port', id: 'port1' },
     });
     expect(codes(validate(g))).toContain('cable.mediaMismatch');
   });
@@ -157,11 +158,11 @@ describe('validation: edge endpoint rules', () => {
   it('Owner customer -> port only when port has UserPort tag', () => {
     const g = new Graph();
     g.addNode({ type: 'customer', id: 'organic-goat' });
-    g.addNode({ type: 'port', id: '@f1/s/1', tags: ['RJ45'] });
+    g.addNode({ type: 'port', id: 'port0', tags: ['RJ45'] });
     g.addEdge({
       relation: 'Owner',
       from: { type: 'customer', id: 'organic-goat' },
-      to: { type: 'port', id: '@f1/s/1' },
+      to: { type: 'port', id: 'port0' },
     });
     expect(codes(validate(g))).toContain('owner.portNotUserPort');
   });
@@ -228,8 +229,8 @@ describe('validation: clean graph has no errors', () => {
     const g = new Graph();
     g.addNode({ type: 'floor', id: 'f1' });
     g.addNode({ type: 'switch', id: 'sw1' });
-    g.addNode({ type: 'port', id: '@f1/s/1', tags: ['RJ45'] });
-    g.addNode({ type: 'port', id: '@f1/c/1', tags: ['RJ45', 'UserPort'] });
+    g.addNode({ type: 'port', id: 'port0', tags: ['RJ45'] });
+    g.addNode({ type: 'port', id: '12345', tags: ['RJ45', 'UserPort'] });
     g.addEdge({
       relation: 'FloorAssignment',
       from: { type: 'floor', id: 'f1' },
@@ -238,12 +239,12 @@ describe('validation: clean graph has no errors', () => {
     g.addEdge({
       relation: 'NIC',
       from: { type: 'switch', id: 'sw1' },
-      to: { type: 'port', id: '@f1/s/1' },
+      to: { type: 'port', id: 'port0' },
     });
     g.addEdge({
       relation: 'NetworkCableLinkRJ45',
-      from: { type: 'port', id: '@f1/s/1' },
-      to: { type: 'port', id: '@f1/c/1' },
+      from: { type: 'port', id: 'port0' },
+      to: { type: 'port', id: '12345' },
     });
     expect(validate(g).errors).toEqual([]);
   });

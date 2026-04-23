@@ -16,21 +16,21 @@ describe('indices: byType and byTag', () => {
 
   it('tracks nodes by tag', () => {
     const g = new Graph();
-    g.addNode({ type: 'port', id: '@f1/c/1', tags: ['RJ45', 'UserPort'] });
-    g.addNode({ type: 'port', id: '@f1/s/1', tags: ['RJ45'] });
-    expect(g.nodesWithTag('UserPort').map((n) => n.id)).toEqual(['@f1/c/1']);
+    g.addNode({ type: 'port', id: '12345', tags: ['RJ45', 'UserPort'] });
+    g.addNode({ type: 'port', id: 'port0', tags: ['RJ45'] });
+    expect(g.nodesWithTag('UserPort').map((n) => n.id)).toEqual(['12345']);
     expect(g.nodesWithTag('RJ45').map((n) => n.id).sort()).toEqual([
-      '@f1/c/1',
-      '@f1/s/1',
+      '12345',
+      'port0',
     ]);
   });
 
   it('updates byTag on updateNode', () => {
     const g = new Graph();
-    g.addNode({ type: 'port', id: '@f1/c/1', tags: ['RJ45'] });
+    g.addNode({ type: 'port', id: '12345', tags: ['RJ45'] });
     expect(g.nodesWithTag('UserPort')).toHaveLength(0);
-    g.updateNode('port', '@f1/c/1', { tags: ['RJ45', 'UserPort'] });
-    expect(g.nodesWithTag('UserPort').map((n) => n.id)).toEqual(['@f1/c/1']);
+    g.updateNode('port', '12345', { tags: ['RJ45', 'UserPort'] });
+    expect(g.nodesWithTag('UserPort').map((n) => n.id)).toEqual(['12345']);
   });
 });
 
@@ -104,15 +104,15 @@ describe('indices: adjacency', () => {
   it('incrementally maintained on add/remove', () => {
     const g = new Graph();
     g.addNode({ type: 'server', id: 'db01' });
-    g.addNode({ type: 'port', id: '@f1/s/1', tags: ['RJ45'] });
+    g.addNode({ type: 'port', id: 'port0', tags: ['RJ45'] });
     const e = g.addEdge({
       relation: 'NIC',
       from: { type: 'server', id: 'db01' },
-      to: { type: 'port', id: '@f1/s/1' },
+      to: { type: 'port', id: 'port0' },
     });
     expect(g.edgesOf('server', 'db01')).toHaveLength(1);
     g.removeEdge(e.id);
     expect(g.edgesOf('server', 'db01')).toHaveLength(0);
-    expect(g.edgesOf('port', '@f1/s/1')).toHaveLength(0);
+    expect(g.edgesOf('port', 'port0')).toHaveLength(0);
   });
 });

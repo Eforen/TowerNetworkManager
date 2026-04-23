@@ -51,7 +51,8 @@ describe('Graph.addNode', () => {
   it('rejects malformed ids', () => {
     const g = new Graph();
     expect(() => g.addNode({ type: 'server', id: 'Bad-Id' })).toThrow();
-    expect(() => g.addNode({ type: 'port', id: 'not-netaddr' })).toThrow();
+    expect(() => g.addNode({ type: 'port', id: '@f1/c/1' })).toThrow();
+    expect(() => g.addNode({ type: 'port', id: 'Bad-Port' })).toThrow();
   });
 });
 
@@ -63,7 +64,7 @@ describe('Graph.addEdge', () => {
       g.addEdge({
         relation: 'NIC',
         from: { type: 'server', id: 'db01' },
-        to: { type: 'port', id: '@f1/s/1' },
+        to: { type: 'port', id: 'port0' },
       }),
     ).toThrow(/missing node/);
   });
@@ -71,11 +72,11 @@ describe('Graph.addEdge', () => {
   it('creates NIC edge server -> port with strength 0.5', () => {
     const g = new Graph();
     g.addNode({ type: 'server', id: 'db01' });
-    g.addNode({ type: 'port', id: '@f1/s/1', tags: ['RJ45'] });
+    g.addNode({ type: 'port', id: 'port0', tags: ['RJ45'] });
     const e = g.addEdge({
       relation: 'NIC',
       from: { type: 'server', id: 'db01' },
-      to: { type: 'port', id: '@f1/s/1' },
+      to: { type: 'port', id: 'port0' },
     });
     expect(e.directed).toBe(true);
     expect(e.strength).toBe(0.5);
@@ -83,18 +84,18 @@ describe('Graph.addEdge', () => {
 
   it('dedupes undirected edges regardless of endpoint order', () => {
     const g = new Graph();
-    g.addNode({ type: 'port', id: '@f1/c/1', tags: ['RJ45'] });
-    g.addNode({ type: 'port', id: '@f1/c/2', tags: ['RJ45'] });
+    g.addNode({ type: 'port', id: 'port0', tags: ['RJ45'] });
+    g.addNode({ type: 'port', id: 'port1', tags: ['RJ45'] });
     g.addEdge({
       relation: 'NetworkCableLinkRJ45',
-      from: { type: 'port', id: '@f1/c/1' },
-      to: { type: 'port', id: '@f1/c/2' },
+      from: { type: 'port', id: 'port0' },
+      to: { type: 'port', id: 'port1' },
     });
     expect(() =>
       g.addEdge({
         relation: 'NetworkCableLinkRJ45',
-        from: { type: 'port', id: '@f1/c/2' },
-        to: { type: 'port', id: '@f1/c/1' },
+        from: { type: 'port', id: 'port1' },
+        to: { type: 'port', id: 'port0' },
       }),
     ).toThrow(/duplicate edge/);
   });
@@ -104,16 +105,16 @@ describe('Graph.removeNode cascades edges', () => {
   it('removes incident edges and cleans adjacency', () => {
     const g = new Graph();
     g.addNode({ type: 'server', id: 'db01' });
-    g.addNode({ type: 'port', id: '@f1/s/1', tags: ['RJ45'] });
+    g.addNode({ type: 'port', id: 'port0', tags: ['RJ45'] });
     g.addEdge({
       relation: 'NIC',
       from: { type: 'server', id: 'db01' },
-      to: { type: 'port', id: '@f1/s/1' },
+      to: { type: 'port', id: 'port0' },
     });
     expect(g.edges.size).toBe(1);
     g.removeNode('server', 'db01');
     expect(g.edges.size).toBe(0);
-    expect(g.edgesOf('port', '@f1/s/1')).toEqual([]);
+    expect(g.edgesOf('port', 'port0')).toEqual([]);
   });
 });
 
@@ -121,13 +122,13 @@ describe('Graph.edgesOf', () => {
   it('returns edges incident in either direction', () => {
     const g = new Graph();
     g.addNode({ type: 'server', id: 'db01' });
-    g.addNode({ type: 'port', id: '@f1/s/1', tags: ['RJ45'] });
+    g.addNode({ type: 'port', id: 'port0', tags: ['RJ45'] });
     g.addEdge({
       relation: 'NIC',
       from: { type: 'server', id: 'db01' },
-      to: { type: 'port', id: '@f1/s/1' },
+      to: { type: 'port', id: 'port0' },
     });
     expect(g.edgesOf('server', 'db01')).toHaveLength(1);
-    expect(g.edgesOf('port', '@f1/s/1')).toHaveLength(1);
+    expect(g.edgesOf('port', 'port0')).toHaveLength(1);
   });
 });

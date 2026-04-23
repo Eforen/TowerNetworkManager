@@ -103,6 +103,7 @@ export interface EdgeVisual {
 export const EDGE_VISUALS: Record<RelationName, EdgeVisual> = {
   NIC:                  { strokeVar: '--tni-edge-nic',         dash: 'solid',  baseWidth: 1.5, arrowhead: true },
   Owner:                { strokeVar: '--tni-edge-owner',       dash: 'dashed', baseWidth: 1.5, arrowhead: true },
+  AssignedTo:           { strokeVar: '--tni-edge-assigned',    dash: 'dashed', baseWidth: 1.2, arrowhead: true },
   NetworkCableLinkRJ45: { strokeVar: '--tni-edge-cable-rj45',  dash: 'solid',  baseWidth: 2.0, arrowhead: false },
   NetworkCableLinkFiber:{ strokeVar: '--tni-edge-cable-fiber', dash: 'solid',  baseWidth: 2.0, arrowhead: false },
   FloorAssignment:      { strokeVar: '--tni-edge-floor',    dash: 'dashed', baseWidth: 1.0, arrowhead: true },

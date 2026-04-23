@@ -67,24 +67,27 @@ function seedDemoGraph(): void {
   g.addNode({ type: 'rack', id: 'r1' });
   g.addNode({ type: 'switch', id: 'sw1' });
   g.addNode({ type: 'server', id: 'db01' });
-  g.addNode({ type: 'port', id: '@f1/s/1', tags: ['RJ45'] });
+  g.addNode({ type: 'port', id: 'port0', tags: ['RJ45'] });
   g.addNode({
     type: 'port',
-    id: '@f1/c/1',
+    id: '12345',
     tags: ['RJ45', 'UserPort'],
-    properties: { deviceAddress: 12345 },
   });
   g.addNode({ type: 'customer', id: 'organic-goat' });
+  g.addNode({ type: 'networkaddress', id: '@f1/c/1' });
+  g.addNode({ type: 'networkaddress', id: '@f1/s/1' });
   g.addEdge({ relation: 'FloorAssignment', from: { type: 'floor', id: 'f1' }, to: { type: 'rack', id: 'r1' } });
   g.addEdge({ relation: 'RackAssignment', from: { type: 'rack', id: 'r1' }, to: { type: 'switch', id: 'sw1' } });
   g.addEdge({ relation: 'RackAssignment', from: { type: 'rack', id: 'r1' }, to: { type: 'server', id: 'db01' } });
-  g.addEdge({ relation: 'NIC', from: { type: 'switch', id: 'sw1' }, to: { type: 'port', id: '@f1/s/1' } });
+  g.addEdge({ relation: 'NIC', from: { type: 'switch', id: 'sw1' }, to: { type: 'port', id: 'port0' } });
   g.addEdge({
     relation: 'NetworkCableLinkRJ45',
-    from: { type: 'port', id: '@f1/s/1' },
-    to: { type: 'port', id: '@f1/c/1' },
+    from: { type: 'port', id: 'port0' },
+    to: { type: 'port', id: '12345' },
   });
-  g.addEdge({ relation: 'Owner', from: { type: 'customer', id: 'organic-goat' }, to: { type: 'port', id: '@f1/c/1' } });
+  g.addEdge({ relation: 'Owner', from: { type: 'customer', id: 'organic-goat' }, to: { type: 'port', id: '12345' } });
+  g.addEdge({ relation: 'AssignedTo', from: { type: 'networkaddress', id: '@f1/c/1' }, to: { type: 'customer', id: 'organic-goat' } });
+  g.addEdge({ relation: 'AssignedTo', from: { type: 'networkaddress', id: '@f1/s/1' }, to: { type: 'server', id: 'db01' } });
   graphStore.graph = g;
   graphStore.touch();
   projectStore.markDirty();

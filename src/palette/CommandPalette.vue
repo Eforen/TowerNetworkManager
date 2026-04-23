@@ -1,12 +1,14 @@
 <!--
   Command palette UI per docs/specs/commandline.md.
 
-  Scope (Phase 5):
+  Scope (Phase 5+):
     - Overlay visible whenever FSM.kind === 'CommandPaletteOpen'.
     - Input line with '>' prompt, monospace font.
-    - Completions popup (up to 12) cycled with Tab / Shift+Tab.
+    - Completions popup (up to 12 items, scrolls to keep selection visible).
+    - While completions are visible: Tab accepts, Up/Down selects within
+      the list, Shift+Tab = previous, Esc collapses the popup.
+    - With popup hidden: Up/Down walks `tni.cmdhistory`; Esc closes palette.
     - Status line shows the last command result / error.
-    - History persisted under `tni.cmdhistory`; Up/Down walks it.
 
   Deferred to later phases:
     - Reverse-incremental search (Ctrl+R).
@@ -17,6 +19,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useFsmStore, useGraphStore, useProjectStore } from '@/store';
 import {
+  applyCandidate,
   CommandHistory,
   complete,
   execute,
@@ -24,6 +27,7 @@ import {
   registerBuiltins,
   type Candidate,
 } from '@/commands';
+import { computeScrollTop } from './scroll';
 
 const fsm = useFsmStore();
 const graphStore = useGraphStore();
@@ -34,6 +38,12 @@ if (registry.all().length === 0) registerBuiltins(registry);
 const history = new CommandHistory();
 
 const inputRef = ref<HTMLInputElement | null>(null);
+const completionsRef = ref<HTMLUListElement | null>(null);
+const candidateEls: (HTMLLIElement | null)[] = [];
+
+function setCandidateRef(el: Element | object | null, i: number): void {
+  candidateEls[i] = (el as HTMLLIElement | null) ?? null;
+}
 const buffer = ref('');
 const caret = ref(0);
 const candidates = ref<Candidate[]>([]);
@@ -81,24 +91,47 @@ function onInput(ev: globalThis.Event): void {
   refreshCompletions();
 }
 
-function acceptCandidate(offset: number): void {
-  if (candidates.value.length === 0) {
-    fsm.dispatch({ type: 'tab' });
-    refreshCompletions();
-    if (candidates.value.length === 0) return;
-  }
+/**
+ * Insert the currently selected candidate at the replace range, collapse
+ * the completions popup, and leave the caret just after the inserted text.
+ * The next keystroke (`inputChanged` dispatch) will re-open completions.
+ */
+function acceptSelectedCandidate(): void {
+  if (candidates.value.length === 0) return;
+  const cand = candidates.value[selectedIndex.value] ?? candidates.value[0];
+  const { buffer: next, caret: nextCaret } = applyCandidate(
+    buffer.value,
+    cand,
+    replaceRange.value,
+  );
+  buffer.value = next;
+  caret.value = nextCaret;
+  void nextTick(() => syncInputRef());
+  candidates.value = [];
+  selectedIndex.value = 0;
+  fsm.dispatch({ type: 'escape' });
+}
+
+/**
+ * Move the selection inside the completion list. Wraps modulo list length.
+ * Assumes the popup is visible.
+ */
+function moveSelection(offset: number): void {
+  if (candidates.value.length === 0) return;
   selectedIndex.value = mod(
     selectedIndex.value + offset,
     candidates.value.length,
   );
-  const cand = candidates.value[selectedIndex.value];
-  const [start, end] = replaceRange.value;
-  const before = buffer.value.slice(0, start);
-  const after = buffer.value.slice(end);
-  const next = `${before}${cand.value}${after}`;
-  buffer.value = next;
-  caret.value = (before + cand.value).length;
-  void nextTick(() => syncInputRef());
+}
+
+/**
+ * Show completions on first Tab press when they aren't visible yet, without
+ * inserting anything. Subsequent Tabs accept the current selection.
+ */
+function openCompletions(): void {
+  refreshCompletions();
+  if (candidates.value.length === 0) return;
+  selectedIndex.value = 0;
   fsm.dispatch({ type: 'tab' });
 }
 
@@ -137,7 +170,15 @@ function onKeydown(event: KeyboardEvent): void {
   if (event.key === 'Tab') {
     event.preventDefault();
     event.stopPropagation();
-    acceptCandidate(event.shiftKey ? -1 : 1);
+    if (showCompletions.value) {
+      if (event.shiftKey) {
+        moveSelection(-1);
+      } else {
+        acceptSelectedCandidate();
+      }
+    } else {
+      openCompletions();
+    }
     return;
   }
   if (event.key === 'Enter') {
@@ -149,12 +190,11 @@ function onKeydown(event: KeyboardEvent): void {
   if (event.key === 'Escape') {
     event.preventDefault();
     event.stopPropagation();
-    if (
-      candidates.value.length > 0
-      && fsm.state.kind === 'CommandPaletteOpen'
-      && fsm.state.sub === 'ShowingCompletions'
-    ) {
+    if (showCompletions.value) {
+      // First Esc: collapse the completion popup; stay in the palette so
+      // the user can now walk history with ArrowUp/Down.
       candidates.value = [];
+      selectedIndex.value = 0;
       fsm.dispatch({ type: 'escape' });
       return;
     }
@@ -163,24 +203,30 @@ function onKeydown(event: KeyboardEvent): void {
     return;
   }
   if (event.key === 'ArrowUp') {
+    event.preventDefault();
+    if (showCompletions.value) {
+      moveSelection(-1);
+      return;
+    }
     const entry = history.walkPrev(buffer.value);
     if (entry !== null) {
-      event.preventDefault();
       buffer.value = entry;
       caret.value = entry.length;
       void nextTick(() => syncInputRef());
-      refreshCompletions();
     }
     return;
   }
   if (event.key === 'ArrowDown') {
+    event.preventDefault();
+    if (showCompletions.value) {
+      moveSelection(1);
+      return;
+    }
     const entry = history.walkNext();
     if (entry !== null) {
-      event.preventDefault();
       buffer.value = entry;
       caret.value = entry.length;
       void nextTick(() => syncInputRef());
-      refreshCompletions();
     }
     return;
   }
@@ -229,6 +275,32 @@ onUnmounted(() => {
 function mod(a: number, b: number): number {
   return ((a % b) + b) % b;
 }
+
+/**
+ * Keep the active candidate visible inside the scrolling list. Called
+ * whenever `selectedIndex` or the candidate list changes. Pure DOM math
+ * so it works under happy-dom in tests — `scrollIntoView` is a no-op
+ * there, but we still update `scrollTop` directly.
+ */
+function scrollSelectedIntoView(): void {
+  const container = completionsRef.value;
+  if (!container) return;
+  const el = candidateEls[selectedIndex.value];
+  if (!el) return;
+  container.scrollTop = computeScrollTop({
+    currentScrollTop: container.scrollTop,
+    viewportHeight: container.clientHeight,
+    itemTop: el.offsetTop,
+    itemHeight: el.offsetHeight,
+  });
+}
+
+watch(
+  [selectedIndex, candidates],
+  () => {
+    void nextTick(() => scrollSelectedIntoView());
+  },
+);
 </script>
 
 <template>
@@ -249,11 +321,17 @@ function mod(a: number, b: number): number {
           @keydown="onKeydown"
         />
       </div>
-      <ul v-if="showCompletions" class="tni-palette__completions">
+      <ul
+        v-if="showCompletions"
+        ref="completionsRef"
+        class="tni-palette__completions"
+      >
         <li
           v-for="(c, i) in candidates"
           :key="c.value"
+          :ref="(el) => setCandidateRef(el, i)"
           :class="{ active: i === selectedIndex }"
+          :data-index="i"
         >
           <span class="tni-palette__cand-value">{{ c.label ?? c.value }}</span>
           <span v-if="c.detail" class="tni-palette__cand-detail">{{ c.detail }}</span>
@@ -263,7 +341,10 @@ function mod(a: number, b: number): number {
         <span>[history: {{ historyCount }}/200]</span>
         <span v-if="hint" class="tni-palette__hint">{{ hint }}</span>
         <span class="tni-palette__keys">
-          <kbd>Tab</kbd> complete  <kbd>Enter</kbd> run  <kbd>Esc</kbd> close
+          <kbd>Tab</kbd> {{ showCompletions ? 'accept' : 'completions' }}
+          <kbd>↑↓</kbd> {{ showCompletions ? 'select' : 'history' }}
+          <kbd>Enter</kbd> run
+          <kbd>Esc</kbd> {{ showCompletions ? 'hide list' : 'close' }}
         </span>
       </div>
       <div
@@ -330,6 +411,9 @@ function mod(a: number, b: number): number {
   max-height: 18rem;
   overflow-y: auto;
   border-bottom: 1px solid var(--tni-border, #2d323b);
+  /* Establish offsetParent so each li's offsetTop is measured relative
+     to this scroll container (instead of the outer fixed panel). */
+  position: relative;
 }
 
 .tni-palette__completions li {

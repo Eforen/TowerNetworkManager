@@ -38,8 +38,11 @@ describe('id regex', () => {
   });
 
   it('isValidNodeId routes per type', () => {
-    expect(isValidNodeId('port', '@f1/c/1')).toBe(true);
-    expect(isValidNodeId('port', 'db01')).toBe(false);
+    expect(isValidNodeId('networkaddress', '@f1/c/1')).toBe(true);
+    expect(isValidNodeId('port', 'port0')).toBe(true);
+    expect(isValidNodeId('port', '12345')).toBe(true);
+    expect(isValidNodeId('port', '@f1/c/1')).toBe(false);
+    expect(isValidNodeId('port', 'Bad-Port')).toBe(false);
     expect(isValidNodeId('server', 'db01')).toBe(true);
     expect(isValidNodeId('program', 'padu_v1')).toBe(true);
     expect(isValidNodeId('usagetype', 'stream-video')).toBe(true);
@@ -55,22 +58,25 @@ describe('nodeKey / parseNodeKey', () => {
   });
 
   it('supports network address ids with colons absent', () => {
-    const key = nodeKey('port', '@f1/c/1');
-    expect(parseNodeKey(key)).toEqual({ type: 'port', id: '@f1/c/1' });
+    const key = nodeKey('networkaddress', '@f1/c/1');
+    expect(parseNodeKey(key)).toEqual({
+      type: 'networkaddress',
+      id: '@f1/c/1',
+    });
   });
 });
 
 describe('edgeId', () => {
   it('directed encodes from->to order', () => {
     const a = nodeKey('server', 'db01');
-    const b = nodeKey('port', '@f1/s/1');
-    expect(edgeId('NIC', a, b, true)).toBe('NIC:server:db01->port:@f1/s/1');
-    expect(edgeId('NIC', b, a, true)).toBe('NIC:port:@f1/s/1->server:db01');
+    const b = nodeKey('port', 'port0');
+    expect(edgeId('NIC', a, b, true)).toBe('NIC:server:db01->port:port0');
+    expect(edgeId('NIC', b, a, true)).toBe('NIC:port:port0->server:db01');
   });
 
   it('undirected canonicalizes endpoints lexicographically', () => {
-    const a = nodeKey('port', '@f1/c/1');
-    const b = nodeKey('port', '@f1/c/2');
+    const a = nodeKey('port', 'port0');
+    const b = nodeKey('port', 'port1');
     expect(edgeId('NetworkCableLinkRJ45', a, b, false)).toBe(
       edgeId('NetworkCableLinkRJ45', b, a, false),
     );

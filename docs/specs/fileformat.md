@@ -20,7 +20,9 @@ Line-oriented text format for serializing a Tower Networking Inc project. Mirror
 ## Lexical rules
 
 - **Identifier** (`<id>`): `[a-z0-9][a-z0-9_-]*`, 1..64 chars.
+- **Port identifier**: literal `port` + digits (`port\d+`, e.g. `port0`, `port1`) for device NIC ports, OR 1..5 numeric digits (`\d{1,5}`) for UserPort-tagged ports (the hardware address of the customer's gear). Port ids are globally unique within the `port` type.
 - **Network address**: `@[A-Za-z0-9_\-/]{1,9}` (must start with `@`, total <= 10 chars per [graphdata.md](graphdata.md)).
+- **Hardware address**: 1..5 numeric digits, used as a `port` id (UserPort) or as the `hardwareAddress` property on a server / switch / router.
 - **Quoted string**: `"..."`, backslash escapes `\"`, `\\`, `\n`.
 - **Bare word**: same charset as identifier, used for property keys, type names, and tags.
 - **Tag**: `#Tag` — PascalCase canonical tag from [graphdata.md](graphdata.md).
@@ -34,13 +36,35 @@ Line-oriented text format for serializing a Tower Networking Inc project. Mirror
 
 - `<type>` is one of the node types (lowercased): `player`, `port`, `switch`, `router`, `server`, `floor`, `rack`, `uplink`, `customer`, `customertype`, `rtable`, `domain`, `networkaddress`, `consumerbehavior`, `producerbehavior`, `behaviorinsight`, `usagetype`, `program`.
 - `<id-or-address>`:
-  - For `port`, `networkaddress`, `uplink`: the network address (`@f1/c/1`) serves as the id.
+  - For `networkaddress`: the network address (`@f1/c/1`) serves as the id.
+  - For `uplink`: exactly 4 lowercase letters (ISP code), e.g. `comc`.
+  - For `port`: literal `port` + digits (`port0`, `port1`) for device NICs, or 1..5 numeric digits (`12345`) for UserPort-tagged ports. Port ids are globally unique within the `port` type. See [graphdata.md](graphdata.md) §Data types.
   - For `domain`: the domain name quoted or bare (`"example.com"`).
   - For `usagetype`: a kebab-case slug from the canonical catalog in [behaviors.md](behaviors.md) (or a custom slug matching `[a-z][a-z0-9-]*`).
   - For `program`: a slug matching `[a-z][a-z0-9_-]*` (game-style ids allow underscores, e.g. `padu_v1`); see [programs.md](programs.md).
   - For `customer`, `player`, `server`, `switch`, `router`, `floor`, `rack`, `customertype`, `rtable`, `consumerbehavior`, `producerbehavior`, `behaviorinsight`: an identifier.
 - Tags and properties are optional and order-independent inside a single line.
 - Re-declaration of the same `(type, id)` is an error.
+
+### Port declaration (special form)
+
+Ports use a dedicated shape because the media type is always required and the id is always numeric:
+
+```
+port <N>[-<M>] <MEDIA> [#Tag ...] [key=value ...]
+```
+
+- `<N>` (and optional `<M>`) are non-negative integers. `<N>-<M>` expands inclusively to one node per number.
+- `<MEDIA>` is one of the aliases `RJ45`, `RJ`, `FiberOptic`, `FIBER`, `F` (case-insensitive). It is stored as a canonical `RJ45` / `FiberOptic` tag and is NOT re-emitted as a `#Tag`.
+- Stored id:
+  - Device port (no `#UserPort` tag): `port<N>` (e.g. id `port0`).
+  - UserPort (`#UserPort` tag present): the raw hardware address (e.g. id `52682`). Range syntax is not allowed on UserPort lines.
+- Canonical form emitted by the serializer always lists individual ports (never a range), with `<MEDIA>` positional:
+
+```
+port 0 RJ45
+port 12345 RJ45 #UserPort
+```
 
 Examples:
 
@@ -49,9 +73,12 @@ customertype casual_dweller name="Casual Dweller"
 customer organic-goat
 networkaddress @f1/c/1
 floor f1
-port @f1/c/1 #RJ45 #UserPort
-server db01 #Server address=10.0.0.5
-router r1 #Router
+switch sw1 #Switch hardwareAddress=42
+port 0 RJ45
+port 0-3 FiberOptic      # range shorthand; expands to port0..port3
+port 12345 RJ45 #UserPort
+server db01 #Server hardwareAddress=17 traversalsPerTick=200
+router r1 #Router hardwareAddress=9
 rtable r1-rt
 domain "example.com"
 ```
@@ -63,7 +90,7 @@ domain "example.com"
 ```
 
 - Direction is left-to-right. Undirected relationships (cable links, uplink connections) are serialized with endpoints in id-sorted order and `:` is required to disambiguate from ambiguous pairs.
-- `:<RelationName>` is the canonical edge type from [graphdata.md](graphdata.md): `NIC`, `Owner`, `Route`, `FloorAssignment`, `RackAssignment`, `NetworkCableLinkRJ45`, `NetworkCableLinkFiber`, `UplinkConnection`, `Insight`, `Consumes`, `Provides`, `Install`.
+- `:<RelationName>` is the canonical edge type from [graphdata.md](graphdata.md): `NIC`, `Owner`, `AssignedTo`, `Route`, `FloorAssignment`, `RackAssignment`, `NetworkCableLinkRJ45`, `NetworkCableLinkFiber`, `UplinkConnection`, `Insight`, `Consumes`, `Provides`, `Install`.
   - If omitted, the parser infers it from the single legal edge type between the two endpoint types; if zero or more than one match, this is an error.
 - `{...}` contains optional edge properties.
 
@@ -71,10 +98,12 @@ Examples:
 
 ```
 customer[organic-goat] -> customertype[casual_dweller] :Owner
-customer[organic-goat] -> networkaddress[@f1/c/1] :Owner
-port[@f1/c/1] -> floor[f1] :FloorAssignment
-server[db01] -> port[@f1/s/1] :NIC
-rtable[r1-rt] -> rtable[r2-rt] :Route {target=@f2/c/*}
+customer[organic-goat] -> port[12345] :Owner
+networkaddress[@f1/c/1] -> customer[organic-goat] :AssignedTo
+port[port0] -> port[12345] :NetworkCableLinkRJ45
+switch[sw1] -> port[port0] :NIC
+server[db01] -> port[port1] :NIC
+rtable[r1-rt] -> rtable[r2-rt] :Route {target=@f2/c/1}
 ```
 
 ## Grammar (EBNF)
@@ -116,7 +145,7 @@ To guarantee byte-identical round-trips (modulo user comments, which are preserv
 1. Emit header `!tni v1`.
 2. Emit entities, grouped and ordered by type in this fixed order: `floor`, `rack`, `uplink`, `port`, `switch`, `router`, `server`, `program`, `rtable`, `player`, `customertype`, `customer`, `domain`, `networkaddress`, `usagetype`, `behaviorinsight`, `consumerbehavior`, `producerbehavior`. Within a group, sort by id (lexicographic; network addresses compared as strings).
 3. Emit one blank line.
-4. Emit edges, grouped by relation in this fixed order: `FloorAssignment`, `RackAssignment`, `UplinkConnection`, `NetworkCableLinkFiber`, `NetworkCableLinkRJ45`, `NIC`, `Install`, `Owner`, `Route`, `Insight`, `Consumes`, `Provides`. Within a group, sort by `(fromType, fromId, toType, toId)`.
+4. Emit edges, grouped by relation in this fixed order: `FloorAssignment`, `RackAssignment`, `UplinkConnection`, `NetworkCableLinkFiber`, `NetworkCableLinkRJ45`, `NIC`, `Install`, `Owner`, `AssignedTo`, `Route`, `Insight`, `Consumes`, `Provides`. Within a group, sort by `(fromType, fromId, toType, toId)`.
 5. Within entity/edge lines, tag tokens come before property tokens; tags sorted lexicographically; props sorted lexicographically by key.
 6. Quoted strings normalized to use `"` quotes with minimal escaping.
 7. Trailing whitespace stripped; file ends with exactly one newline.
@@ -153,6 +182,7 @@ Parser errors include line and column and a short hint. Examples:
 line 4, col 10: unknown edge type ':Ownner' (did you mean 'Owner'?)
 line 7, col 1: duplicate entity 'server[db01]'
 line 12, col 15: network address '@f1/customer/1' exceeds 10-char limit
+line 19, col 14: port id 'ABCDE' must be numeric (UserPort) or 'port' + digits
 ```
 
 ## Example (full)
@@ -162,14 +192,18 @@ line 12, col 15: network address '@f1/customer/1' exceeds 10-char limit
 # Small demo: one customer on floor 1 with a streaming behavior
 
 floor f1
-rack r1 floor=f1
-port @f1/c/1 #RJ45 #UserPort
-switch sw1 #Switch traversalsPerTick=1000
-router rt1 #Router traversalsPerTick=500
-server db01 #Server address=10.0.0.5 traversalsPerTick=200 cpuTotal=8 memoryTotal=8 storageTotal=16
+rack r1
+port 12345 RJ45 #UserPort
+port 0 RJ45
+port 1 RJ45
+switch sw1 #Switch hardwareAddress=42 traversalsPerTick=1000
+router rt1 #Router hardwareAddress=9 traversalsPerTick=500
+server db01 #Server hardwareAddress=17 traversalsPerTick=200 cpuTotal=8 memoryTotal=8 storageTotal=16
 customertype casual_dweller name="Casual Dweller"
 customer organic-goat
 domain "netplix.example"
+networkaddress @f1/c/1
+networkaddress @f1/s/1
 
 program gitcoffee cpu=4 memory=2 storage=4 pool.provide.main=16
 program padu_v1 cpu=1 memory=2 storage=4 pool.provide.main=1
@@ -183,12 +217,17 @@ consumerbehavior casual-home-user name="Casual Home User"
 
 floor[f1] -> rack[r1] :FloorAssignment
 floor[f1] -> switch[sw1] :FloorAssignment
-switch[sw1] -> port[@f1/c/1] :NIC
+rack[r1] -> server[db01] :RackAssignment
+switch[sw1] -> port[port0] :NIC
+server[db01] -> port[port1] :NIC
+port[port0] -> port[12345] :NetworkCableLinkRJ45
 server[db01] -> program[gitcoffee] :Install
 server[db01] -> program[padu_v1]   :Install
 customer[organic-goat] -> customertype[casual_dweller] :Owner
-customer[organic-goat] -> networkaddress[@f1/c/1] :Owner
+customer[organic-goat] -> port[12345] :Owner
 customer[organic-goat] -> consumerbehavior[casual-home-user] :Owner
+networkaddress[@f1/c/1] -> customer[organic-goat] :AssignedTo
+networkaddress[@f1/s/1] -> server[db01] :AssignedTo
 consumerbehavior[casual-home-user] -> behaviorinsight[evening-tv] :Insight
 behaviorinsight[evening-tv] -> usagetype[stream-video] :Consumes {required=25}
 domain["netplix.example"] -> usagetype[stream-video] :Provides {required=50}

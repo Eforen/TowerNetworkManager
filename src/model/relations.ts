@@ -50,17 +50,29 @@ export const RELATION_META: Record<RelationName, RelationMeta> = {
     pairs: [
       ['customer', 'port'], // UserPort-tagged, checked in validation
       ['customer', 'domain'],
-      ['customer', 'networkaddress'],
       ['customer', 'customertype'],
       ['customer', 'consumerbehavior'],
       ['customer', 'producerbehavior'],
       ['player', 'port'],
       ['player', 'domain'],
-      ['player', 'networkaddress'],
       ['player', 'customertype'],
       ['player', 'consumerbehavior'],
       ['player', 'producerbehavior'],
       ['router', 'rtable'],
+    ],
+  },
+  AssignedTo: {
+    name: 'AssignedTo',
+    directed: true,
+    strength: 3,
+    pairs: [
+      ['networkaddress', 'server'],
+      ['networkaddress', 'router'],
+      ['networkaddress', 'switch'],
+      ['networkaddress', 'port'],
+      ['networkaddress', 'uplink'],
+      ['networkaddress', 'customer'],
+      ['networkaddress', 'player'],
     ],
   },
   NetworkCableLinkRJ45: {

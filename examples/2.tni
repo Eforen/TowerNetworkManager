@@ -13,16 +13,6 @@ behaviorinsight validate-digital-payment name="Validate Digital Payment" bandwid
 -> usagetype[facilitate-banking] :Consumes
 -> usagetype[authenticate-transaction] :Consumes
 
-behaviorinsight evening-tv name="Evening TV" bandwidthPerTick=40 activeProbability=0.6
-behaviorinsight music name="Background Music" bandwidthPerTick=8
-consumerbehavior casual-home-user name="Casual Home User"
-customer organic-goat
-
-customer[organic-goat] -> consumerbehavior[casual-home-user] :Owner
-consumerbehavior[casual-home-user] -> behaviorinsight[evening-tv] :Insight
-consumerbehavior[casual-home-user] -> behaviorinsight[music] :Insight
-behaviorinsight[evening-tv] -> usagetype[stream-video] :Consumes {required=25}
-behaviorinsight[music] -> usagetype[stream-audio] :Consumes
 #################################
 ## Floors
 floor f1
@@ -33,9 +23,11 @@ customer upset-hamster
 # network address is @f1/c/3
 customer organic-goat
 => port RJ45 52682 dhcp=false :Owner
-=> networkaddress @f1/c/3 :Owner
+=> networkaddress @f1/c/3 :AssignedTo
 -> consumerbehavior[casual-dweller] :IsA
-customer[organic-goat].port -> customer[organic-goat].networkaddress :Owner
+
+
+
 floor f2
 customer virtuous-toad
 customer radiant-penguin

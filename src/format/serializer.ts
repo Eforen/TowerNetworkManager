@@ -24,8 +24,10 @@
 import {
   DEFAULT_PROPERTIES_BY_TYPE,
   DEFAULT_TAGS_BY_TYPE,
+  HARDWARE_ADDR_RE,
   NET_ADDR_RE,
   NODE_ID_RE,
+  PORT_SLUG_RE,
   RELATION_META,
   isNetAddrType,
   parseNodeKey,
@@ -67,6 +69,7 @@ export const RELATION_ORDER: readonly RelationName[] = [
   'NIC',
   'Install',
   'Owner',
+  'AssignedTo',
   'Route',
   'Insight',
   'Consumes',
@@ -107,6 +110,8 @@ export function serialize(graph: Graph): string {
 // ---------------------------------------------------------------------------
 
 function serializeNode(node: Node): string {
+  if (node.type === 'port') return serializePortNode(node);
+
   const parts: string[] = [node.type, formatIdentity(node.type, node.id)];
 
   const defaults = DEFAULT_TAGS_BY_TYPE[node.type] ?? [];
@@ -123,6 +128,37 @@ function serializeNode(node: Node): string {
     parts.push(`${k}=${formatValue(v)}`);
   }
 
+  return parts.join(' ');
+}
+
+/**
+ * Canonical port line: `port <N> <MEDIA> [#NonMediaTag ...] [k=v ...]`.
+ *
+ *   - device port: id is `port<N>`, N is the trailing digits.
+ *   - UserPort: id is bare digits (hardware address); `#UserPort` tag
+ *     emitted after media so it round-trips.
+ *   - media keyword is positional; not emitted as `#RJ45` / `#FiberOptic`.
+ */
+function serializePortNode(node: Node): string {
+  const isUser = node.tags.includes('UserPort');
+  const numberText = isUser ? node.id : node.id.replace(/^port/, '');
+  const media = node.tags.includes('FiberOptic') ? 'FiberOptic' : 'RJ45';
+  const parts: string[] = ['port', numberText, media];
+
+  const defaults = DEFAULT_TAGS_BY_TYPE.port ?? [];
+  const hidden = new Set<string>([...defaults, 'RJ45', 'FiberOptic']);
+  const emittedTags = node.tags
+    .filter((t) => !hidden.has(t))
+    .sort((a, b) => a.localeCompare(b));
+  for (const t of emittedTags) parts.push(`#${t}`);
+
+  const defaultProps = DEFAULT_PROPERTIES_BY_TYPE.port ?? {};
+  const keys = Object.keys(node.properties).sort((a, b) => a.localeCompare(b));
+  for (const k of keys) {
+    const v = node.properties[k];
+    if (defaultProps[k] !== undefined && defaultProps[k] === v) continue;
+    parts.push(`${k}=${formatValue(v)}`);
+  }
   return parts.join(' ');
 }
 
@@ -175,6 +211,12 @@ function serializeEdgeLine(pe: PreparedEdge): string {
 
 function formatIdentity(type: NodeType, id: string): string {
   if (isNetAddrType(type)) return id; // e.g. @f1/c/1
+  if (type === 'port') {
+    // UserPort-tagged ports use 1..5 digits; device ports use a plain
+    // slug. Both are emitted bare.
+    if (HARDWARE_ADDR_RE.test(id) || PORT_SLUG_RE.test(id)) return id;
+    return quoteString(id);
+  }
   if (type === 'domain' && !NODE_ID_RE.test(id)) {
     return quoteString(id);
   }

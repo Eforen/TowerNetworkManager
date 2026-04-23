@@ -72,23 +72,40 @@ export function complete(
   // Resolve the command greedily against all tokens typed so far.
   const resolved = registry.resolve(tokens.map((t) => t.value));
   if (!resolved) {
+    // The typed tokens don't name a command yet — treat everything
+    // written so far (including an optional in-progress partial) as an
+    // incomplete command prefix. Filter by that prefix and expand the
+    // replace range to cover the whole command-name region so accepting
+    // a candidate rewrites the line cleanly (no duplicate "add add node").
+    const priorValues = tokens.slice(0, activeIndex).map((t) => t.value);
+    const prefix = priorValues.concat(partial ? [partial] : []).join(' ');
+    const expandedReplace: [number, number] = [
+      tokens[0]?.start ?? replace[0],
+      replace[1],
+    ];
     return {
-      replace,
-      candidates: completeCommandName(registry, partial),
-      hint: 'unknown command',
+      replace: expandedReplace,
+      candidates: completeCommandName(registry, prefix),
+      hint: 'command',
     };
   }
 
   // If the caret is still inside the command-name prefix, offer longer
-  // command names that share the current prefix.
+  // command names that share the current prefix. Expand the replace
+  // range to cover the whole command-name region so accepting rewrites
+  // the full prefix cleanly (no duplicate "add add node").
   if (activeIndex < resolved.consumed) {
     const prefix = tokens
       .slice(0, activeIndex)
       .map((t) => t.value)
       .concat(partial)
       .join(' ');
+    const expandedReplace: [number, number] = [
+      tokens[0]?.start ?? replace[0],
+      replace[1],
+    ];
     return {
-      replace,
+      replace: expandedReplace,
       candidates: completeCommandName(registry, prefix),
       hint: resolved.def.name,
     };
@@ -109,6 +126,24 @@ export function complete(
     candidates: completeArg(spec, partial, graph),
     hint: `<${spec.name}: ${spec.type}>`,
   };
+}
+
+/**
+ * Apply a selected candidate to the buffer at the given replace range.
+ * Pure: returns the next buffer string and the new caret position (just
+ * after the inserted text). Extracted from the palette component so the
+ * insertion behavior can be unit-tested without mounting Vue.
+ */
+export function applyCandidate(
+  buffer: string,
+  cand: Candidate,
+  replace: [number, number],
+): { buffer: string; caret: number } {
+  const [start, end] = replace;
+  const before = buffer.slice(0, start);
+  const after = buffer.slice(end);
+  const next = `${before}${cand.value}${after}`;
+  return { buffer: next, caret: (before + cand.value).length };
 }
 
 function completeCommandName(

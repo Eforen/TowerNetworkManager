@@ -74,6 +74,7 @@ export type Tag = CanonicalTag | (string & { __brand?: 'Tag' });
 export const RELATION_NAMES = [
   'NIC',
   'Owner',
+  'AssignedTo',
   'NetworkCableLinkRJ45',
   'NetworkCableLinkFiber',
   'FloorAssignment',

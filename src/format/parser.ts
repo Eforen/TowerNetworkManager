@@ -15,9 +15,12 @@
 import { ParseError, suggest } from './errors';
 import {
   Graph,
+  HARDWARE_ADDR_RE,
   NET_ADDR_RE,
   NODE_ID_RE,
   NODE_TYPES,
+  PORT_SLUG_RE,
+  UPLINK_ID_RE,
   RELATION_META,
   RELATION_NAMES,
   isNetAddrType,
@@ -153,12 +156,103 @@ function parseEntity(text: string, srcLine: number, graph: Graph): void {
   }
   const type = typeTok as NodeType;
 
+  if (type === 'port') {
+    parsePortEntity(cur, graph);
+    return;
+  }
+
   cur.skipSpaces();
   const id = readIdentity(cur, type);
 
   const { tags, properties } = readTagsAndProps(cur);
 
   graph.addNode({ type, id, tags, properties });
+}
+
+/**
+ * Port declaration: `port <N>[-<M>] <MEDIA> [#Tag ...] [key=value ...]`.
+ *
+ * Stored ids:
+ *   - Device ports (no `#UserPort` tag): `port<N>` (e.g. id `port0`).
+ *   - UserPorts (`#UserPort` tag present): bare digits (hardware address).
+ *
+ * The `<N>-<M>` range syntax expands inclusively into individual nodes.
+ * The media keyword is positional and accepts the aliases:
+ *   RJ45 | RJ  -> tag `RJ45`
+ *   FiberOptic | FIBER | F -> tag `FiberOptic`
+ */
+const PORT_MEDIA_ALIASES: Record<string, 'RJ45' | 'FiberOptic'> = {
+  rj45: 'RJ45',
+  rj: 'RJ45',
+  fiberoptic: 'FiberOptic',
+  fiber: 'FiberOptic',
+  f: 'FiberOptic',
+};
+
+function parsePortEntity(cur: Cursor, graph: Graph): void {
+  cur.skipSpaces();
+  const firstDigits = cur.readDigits();
+  if (firstDigits === undefined) {
+    throw new ParseError(
+      "expected a port number (e.g. 'port 0 RJ45')",
+      cur.loc(),
+    );
+  }
+  const start = Number(firstDigits);
+  let end = start;
+  if (cur.peek() === '-') {
+    cur.advance(1);
+    const lastDigits = cur.readDigits();
+    if (lastDigits === undefined) {
+      throw new ParseError(
+        "expected end of port range after '-'",
+        cur.loc(),
+      );
+    }
+    end = Number(lastDigits);
+    if (end < start) {
+      throw new ParseError(
+        `empty port range ${start}-${end}`,
+        cur.startLoc(),
+      );
+    }
+  }
+
+  cur.skipSpaces();
+  const mediaWord = cur.readAlnumWord();
+  if (!mediaWord) {
+    throw new ParseError(
+      'expected port media (RJ45|RJ|FiberOptic|FIBER|F)',
+      cur.loc(),
+    );
+  }
+  const mediaTag = PORT_MEDIA_ALIASES[mediaWord.toLowerCase()];
+  if (!mediaTag) {
+    throw new ParseError(
+      `unknown port media '${mediaWord}' (use RJ45|RJ|FiberOptic|FIBER|F)`,
+      cur.startLoc(),
+    );
+  }
+
+  const { tags, properties } = readTagsAndProps(cur);
+  const allTags = tags.includes(mediaTag) ? tags : [mediaTag, ...tags];
+  const isUserPort = allTags.includes('UserPort');
+  if (isUserPort && start !== end) {
+    throw new ParseError(
+      'UserPort range is not supported (hardware addresses are unique per customer)',
+      cur.startLoc(),
+    );
+  }
+
+  for (let n = start; n <= end; n++) {
+    const id = isUserPort ? String(n) : `port${n}`;
+    graph.addNode({
+      type: 'port',
+      id,
+      tags: allTags.slice(),
+      properties: { ...properties },
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -278,6 +372,35 @@ function readIdentity(cur: Cursor, type: NodeType): string {
   if (type === 'domain') {
     const id = cur.readDomainLike();
     if (!id) throw new ParseError('expected a domain name', cur.loc());
+    return id;
+  }
+  // `port` ids are either numeric hardware addresses (UserPort) or
+  // plain slugs starting with a letter (device NICs). `readWord` already
+  // accepts both shapes; validate after.
+  if (type === 'port') {
+    const id = cur.readWord();
+    if (id === undefined) {
+      throw new ParseError('expected a port id', cur.loc());
+    }
+    if (!HARDWARE_ADDR_RE.test(id) && !PORT_SLUG_RE.test(id)) {
+      throw new ParseError(
+        `invalid port id '${id}' (expected 1..5 digits for UserPort, or 'port' + digits like 'port0')`,
+        cur.startLoc(),
+      );
+    }
+    return id;
+  }
+  if (type === 'uplink') {
+    const id = cur.readWord();
+    if (id === undefined) {
+      throw new ParseError('expected an uplink id', cur.loc());
+    }
+    if (!UPLINK_ID_RE.test(id)) {
+      throw new ParseError(
+        `invalid uplink id '${id}' (expected exactly 4 lowercase letters)`,
+        cur.startLoc(),
+      );
+    }
     return id;
   }
   const id = cur.readWord();
@@ -439,6 +562,34 @@ class Cursor {
       end < this.text.length &&
       /[a-zA-Z0-9_-]/.test(this.text[end])
     ) {
+      end++;
+    }
+    const out = this.text.slice(this.pos, end);
+    this.pos = end;
+    return out;
+  }
+
+  /** Read a run of digits. Used for port numbers in `port 0 RJ45` syntax. */
+  readDigits(): string | undefined {
+    this.skipSpaces();
+    this.start();
+    if (this.pos >= this.text.length) return undefined;
+    if (!/[0-9]/.test(this.text[this.pos])) return undefined;
+    let end = this.pos + 1;
+    while (end < this.text.length && /[0-9]/.test(this.text[end])) end++;
+    const out = this.text.slice(this.pos, end);
+    this.pos = end;
+    return out;
+  }
+
+  /** Read a run of ASCII alphanumerics. Case-insensitive start character. */
+  readAlnumWord(): string | undefined {
+    this.skipSpaces();
+    this.start();
+    if (this.pos >= this.text.length) return undefined;
+    if (!/[A-Za-z0-9]/.test(this.text[this.pos])) return undefined;
+    let end = this.pos + 1;
+    while (end < this.text.length && /[A-Za-z0-9]/.test(this.text[end])) {
       end++;
     }
     const out = this.text.slice(this.pos, end);
