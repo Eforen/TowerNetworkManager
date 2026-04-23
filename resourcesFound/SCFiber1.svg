@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8" standalone="no"?>
 <!-- Created with Inkscape (http://www.inkscape.org/) -->
-
+<!-- Originally from https://freesvg.org/1532986215 as Public Domain -->
 <svg
    xmlns:dc="http://purl.org/dc/elements/1.1/"
    xmlns:cc="http://creativecommons.org/ns#"
@@ -9,9 +9,9 @@
    xmlns="http://www.w3.org/2000/svg"
    xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
    xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
-   width="70.965034mm"
+   width="35.482517mm"
    height="26.080357mm"
-   viewBox="0 0 70.965034 26.080357"
+   viewBox="0 0 35.482517 26.080357"
    version="1.1"
    id="svg94605"
    inkscape:version="0.92.2 2405546, 2018-03-11"
@@ -78,7 +78,7 @@
     <rect
        style="opacity:1;fill:#a8a580;fill-opacity:1;stroke:none;stroke-width:1.52771354;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1"
        id="rect95223"
-       width="70.965034"
+       width="35.482517"
        height="26.080357"
        x="63.027527"
        y="93.459824" />
@@ -145,68 +145,6 @@
            height="2.3623512"
            x="77.626862"
            y="93.768524" />
-      </g>
-      <g
-         transform="translate(34.962798)"
-         id="g95221">
-        <rect
-           y="96.105652"
-           x="68.130211"
-           height="20.221727"
-           width="24.993675"
-           id="rect95203"
-           style="opacity:1;fill:#403e2c;fill-opacity:1;stroke:none;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1" />
-        <circle
-           r="4.7430058"
-           cy="106.40343"
-           cx="80.331192"
-           id="circle95205"
-           style="opacity:1;fill:#000000;fill-opacity:1;stroke:#a8a580;stroke-width:1.38905203;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1" />
-        <g
-           style="fill:#a8a580;fill-opacity:1"
-           transform="translate(0,0.09241676)"
-           id="g95211">
-          <rect
-             style="opacity:1;fill:#a8a580;fill-opacity:1;stroke:none;stroke-width:1.5351336;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1"
-             id="rect95207"
-             width="3.6380208"
-             height="10.441592"
-             x="87.170761"
-             y="101.09022" />
-          <rect
-             y="99.318451"
-             x="89.722099"
-             height="13.985119"
-             width="1.0866815"
-             id="rect95209"
-             style="opacity:1;fill:#a8a580;fill-opacity:1;stroke:none;stroke-width:0.97098929;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1" />
-        </g>
-        <g
-           id="g95217"
-           transform="matrix(-1,0,0,1,160.66238,0.09241676)"
-           style="fill:#a8a580;fill-opacity:1">
-          <rect
-             y="101.09022"
-             x="87.170761"
-             height="10.441592"
-             width="3.6380208"
-             id="rect95213"
-             style="opacity:1;fill:#a8a580;fill-opacity:1;stroke:none;stroke-width:1.5351336;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1" />
-          <rect
-             style="opacity:1;fill:#a8a580;fill-opacity:1;stroke:none;stroke-width:0.97098929;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1"
-             id="rect95215"
-             width="1.0866815"
-             height="13.985119"
-             x="89.722099"
-             y="99.318451" />
-        </g>
-        <rect
-           y="93.768524"
-           x="77.626862"
-           height="2.3623512"
-           width="6.0003719"
-           id="rect95219"
-           style="opacity:1;fill:#d9d8c7;fill-opacity:1;stroke:none;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1" />
       </g>
     </g>
   </g>
