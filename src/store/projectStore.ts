@@ -6,6 +6,8 @@
  *
  *   - `new <slug>` creates an empty project and makes it active.
  *   - `load <slug>` reads `tni.project.<slug>` and replaces the graph.
+ *   - `load raw <slug>` reads the same key into a manual text buffer without
+ *     parsing (for broken / legacy files); `save` then writes that text.
  *   - `save [<slug>]` serializes the current graph and writes
  *     `tni.project.<slug>` (quota guarded at 4 MB).
  *   - `rm project <slug>` deletes the project entry.
@@ -49,8 +51,21 @@ export const useProjectStore = defineStore('project', () => {
   const active = ref<string | null>(null);
   const dirty = ref(false);
 
+  /**
+   * When true, `loadRaw` put storage bytes in `manualSourceText` without
+   * parsing. Graph is empty until `applyManualSource()` succeeds. `save`
+   * persists `manualSourceText` as-is so broken files can be fixed and
+   * re-saved without round-tripping through the serializer.
+   */
+  const manualSourceMode = ref(false);
+  const manualSourceText = ref('');
+
   const hasActive = computed(() => active.value !== null);
-  const projectSize = computed(() => byteSize(graphStore.serializeText()));
+  const projectSize = computed(() =>
+    manualSourceMode.value
+      ? byteSize(manualSourceText.value)
+      : byteSize(graphStore.serializeText()),
+  );
   const overQuota = computed(() => projectSize.value > QUOTA_WARN_BYTES);
 
   /**
@@ -99,6 +114,55 @@ export const useProjectStore = defineStore('project', () => {
     }
     slugs.value = [...slugs.value, slug];
     active.value = slug;
+    manualSourceMode.value = false;
+    manualSourceText.value = '';
+    graphStore.reset();
+    dirty.value = false;
+    persistIndex();
+  }
+
+  /**
+   * Read project bytes from storage into `manualSourceText` without parsing.
+   * Graph is cleared; use `applyManualSource()` after fixing syntax, or
+   * `save()` to overwrite storage from the editor.
+   */
+  function loadRaw(slug: string): void {
+    requireSlug(slug);
+    const text = readProjectText(backend.value, slug);
+    if (text === null) {
+      throw new StorageError('invalid', `no project '${slug}' in storage`);
+    }
+    graphStore.reset();
+    manualSourceText.value = text;
+    manualSourceMode.value = true;
+    active.value = slug;
+    if (!slugs.value.includes(slug)) {
+      slugs.value = [...slugs.value, slug];
+    }
+    dirty.value = true;
+    persistIndex();
+  }
+
+  /** Parse `manualSourceText` into the graph and leave normal edit mode. */
+  function applyManualSource(): void {
+    if (!manualSourceMode.value) {
+      throw new StorageError(
+        'invalid',
+        'not in manual source mode (use `load raw <slug>` first)',
+      );
+    }
+    graphStore.parseText(manualSourceText.value);
+    manualSourceMode.value = false;
+    manualSourceText.value = '';
+    dirty.value = false;
+    persistIndex();
+  }
+
+  /** Exit manual source mode without parsing; graph stays empty. */
+  function cancelManualSource(): void {
+    if (!manualSourceMode.value) return;
+    manualSourceMode.value = false;
+    manualSourceText.value = '';
     graphStore.reset();
     dirty.value = false;
     persistIndex();
@@ -110,6 +174,8 @@ export const useProjectStore = defineStore('project', () => {
     if (text === null) {
       throw new StorageError('invalid', `no project '${slug}' in storage`);
     }
+    manualSourceMode.value = false;
+    manualSourceText.value = '';
     graphStore.parseText(text);
     active.value = slug;
     if (!slugs.value.includes(slug)) {
@@ -125,7 +191,9 @@ export const useProjectStore = defineStore('project', () => {
       throw new StorageError('invalid', 'no active project to save');
     }
     requireSlug(target);
-    const text = graphStore.serializeText();
+    const text = manualSourceMode.value
+      ? manualSourceText.value
+      : graphStore.serializeText();
     writeProjectText(backend.value, target, text);
     if (!slugs.value.includes(target)) {
       slugs.value = [...slugs.value, target];
@@ -141,6 +209,8 @@ export const useProjectStore = defineStore('project', () => {
     slugs.value = slugs.value.filter((s) => s !== slug);
     if (active.value === slug) {
       active.value = null;
+      manualSourceMode.value = false;
+      manualSourceText.value = '';
       graphStore.reset();
       dirty.value = false;
     }
@@ -158,7 +228,9 @@ export const useProjectStore = defineStore('project', () => {
    */
   function exportCurrent(slug?: string): { text: string; filename: string } {
     const target = slug ?? active.value ?? 'untitled';
-    const text = graphStore.serializeText();
+    const text = manualSourceMode.value
+      ? manualSourceText.value
+      : graphStore.serializeText();
     return { text, filename: `${target}.tni` };
   }
 
@@ -169,6 +241,8 @@ export const useProjectStore = defineStore('project', () => {
    */
   function importText(text: string): void {
     graphStore.parseText(text);
+    manualSourceMode.value = false;
+    manualSourceText.value = '';
     dirty.value = true;
   }
 
@@ -189,6 +263,8 @@ export const useProjectStore = defineStore('project', () => {
     slugs,
     active,
     dirty,
+    manualSourceMode,
+    manualSourceText,
     hasActive,
     projectSize,
     overQuota,
@@ -196,6 +272,9 @@ export const useProjectStore = defineStore('project', () => {
     hydrate,
     newProject,
     load,
+    loadRaw,
+    applyManualSource,
+    cancelManualSource,
     save,
     removeProject,
     list,

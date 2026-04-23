@@ -340,6 +340,18 @@ function edgePropEntries(e: Edge): Array<[string, unknown]> {
   return out;
 }
 
+/** Tooltip: show non-empty node properties (name is already in the header line). */
+function nodePropEntries(n: ModelNode): Array<[string, unknown]> {
+  const out: Array<[string, unknown]> = [];
+  for (const [k, v] of Object.entries(n.properties)) {
+    if (v === undefined || v === null || v === '') continue;
+    if (k === 'name') continue;
+    out.push([k, v]);
+  }
+  out.sort((a, b) => a[0].localeCompare(b[0]));
+  return out;
+}
+
 // ---------------------------------------------------------------------
 // Click / selection
 // ---------------------------------------------------------------------
@@ -647,6 +659,19 @@ defineExpose({ layout, simNodes, simLinks });
         <div v-if="hoverNode.tags.length > 0" class="tni-tip__tags">
           <span v-for="t in hoverNode.tags" :key="t" class="tni-tip__tag">{{ t }}</span>
         </div>
+        <div
+          v-if="nodePropEntries(hoverNode).length > 0"
+          class="tni-tip__props"
+        >
+          <div
+            v-for="[k, v] in nodePropEntries(hoverNode)"
+            :key="k"
+            class="tni-tip__prop-row"
+          >
+            <span class="tni-tip__prop-k">{{ k }}</span>
+            <span class="tni-tip__prop-v">{{ v }}</span>
+          </div>
+        </div>
         <div class="tni-tip__footer">
           neighbors: {{ hoverNeighbors.size }}
         </div>
@@ -846,6 +871,31 @@ defineExpose({ layout, simNodes, simLinks });
   padding: 0.05rem 0.35rem;
   border: 1px solid var(--tni-border);
   border-radius: 999px;
+}
+
+.tni-tip__props {
+  margin-top: 0.35rem;
+  font-family: var(--tni-font-mono);
+  font-size: 0.72rem;
+  line-height: 1.35;
+  max-height: 10rem;
+  overflow-y: auto;
+}
+
+.tni-tip__prop-row {
+  display: flex;
+  gap: 0.35rem;
+  align-items: baseline;
+}
+
+.tni-tip__prop-k {
+  color: var(--tni-fg-muted);
+  flex: 0 0 auto;
+}
+
+.tni-tip__prop-v {
+  color: var(--tni-fg);
+  word-break: break-all;
 }
 
 .tni-tip__footer {

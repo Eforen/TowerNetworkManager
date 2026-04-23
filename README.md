@@ -1,4 +1,4 @@
-# Tower Networking Inc
+# Tower Networking Manager
 
 Client-side PWA for modeling and analyzing tower networks. Vue 3 + TypeScript + Pinia + d3-force.
 

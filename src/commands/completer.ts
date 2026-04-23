@@ -20,10 +20,10 @@ import {
   type NodeType,
 } from '@/model';
 import type { Graph } from '@/model';
-import type { ArgSpec } from './types';
+import type { ArgSpec, CommandDef, FlagSpec } from './types';
 import { parseTypedRef } from './builtins';
 import type { CommandRegistry } from './registry';
-import { tokenizeWithCaret } from './tokenizer';
+import { tokenizeWithCaret, type Token } from './tokenizer';
 
 export interface Candidate {
   value: string;
@@ -59,27 +59,59 @@ export function complete(
   graph: Graph,
   extras: CompletionExtras = {},
 ): CompletionResult {
-  const { tokens, activeIndex, caretAtTokenEnd } = tokenizeWithCaret(
+  let { tokens, activeIndex, caretAtTokenEnd } = tokenizeWithCaret(
     input,
     caret,
   );
 
-  // Caret in whitespace between existing tokens: nothing sensible to
-  // complete (would require disambiguating which slot is "active").
+  let gapSnapped = false;
+
+  // Caret in whitespace between tokens: snap so Tab still works.
+  if (activeIndex === -1 && tokens.length > 0) {
+    const last = tokens[tokens.length - 1]!;
+    if (caret > last.end && /^[ \t]*$/.test(input.slice(last.end, caret))) {
+      // Trailing whitespace after last token → virtual EOL (e.g. `…43354 `).
+      activeIndex = tokens.length;
+      caretAtTokenEnd = true;
+    } else {
+      for (let i = 0; i < tokens.length - 1; i++) {
+        const a = tokens[i]!;
+        const b = tokens[i + 1]!;
+        if (caret > a.end && caret < b.start) {
+          const gap = input.slice(a.end, caret);
+          if (/^[ \t]*$/.test(gap)) {
+            // Gap before next token (e.g. `…43354 --prop`): complete as if before `b`.
+            activeIndex = i + 1;
+            caretAtTokenEnd = false;
+            gapSnapped = true;
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  // Caret in whitespace that is not a handled gap (e.g. mid-word garbage).
   if (activeIndex === -1) {
     return { replace: [caret, caret], candidates: [] };
   }
 
   const isVirtualSlot = activeIndex >= tokens.length;
   const activeToken = isVirtualSlot ? undefined : tokens[activeIndex];
-  const partial = activeToken
-    ? caretAtTokenEnd
-      ? activeToken.value
-      : activeToken.value.slice(0, caret - activeToken.start)
-    : '';
-  const replace: [number, number] = activeToken
-    ? [activeToken.start, activeToken.end]
-    : [caret, caret];
+  const partial =
+    gapSnapped && activeToken && caret < activeToken.start
+      ? ''
+      : activeToken
+        ? caretAtTokenEnd
+          ? activeToken.value
+          : activeToken.value.slice(0, caret - activeToken.start)
+        : '';
+  const replace: [number, number] =
+    gapSnapped && activeToken && caret < activeToken.start
+      ? [caret, caret]
+      : activeToken
+        ? [activeToken.start, activeToken.end]
+        : [caret, caret];
 
   // First token: command names.
   if (activeIndex === 0) {
@@ -131,6 +163,17 @@ export function complete(
       hint: resolved.def.name,
     };
   }
+
+  const flagTry = tryFlagCompletion(
+    resolved.def,
+    tokens,
+    resolved.consumed,
+    activeIndex,
+    isVirtualSlot,
+    partial,
+    replace,
+  );
+  if (flagTry) return flagTry;
 
   const argIndex = activeIndex - resolved.consumed;
   const argSpec = resolved.def.argSpec ?? [];
@@ -406,6 +449,195 @@ function completeRelation(partial: string, priorArgs: string[]): Candidate[] {
     [...RELATION_NAMES].map((r) => ({ value: r, detail: 'relation' })),
     partial,
   );
+}
+
+/**
+ * Property keys for `--prop key=value` on `mod node` / `add node` (see graphdata.md).
+ */
+const PROP_KEYS_FOR_NODE_TYPE: Partial<Record<NodeType, string[]>> = {
+  server: [
+    'cpuTotal',
+    'memoryTotal',
+    'storageTotal',
+    'traversalsPerTick',
+    'hardwareAddress',
+    'portLayout',
+    'name',
+  ],
+  switch: ['traversalsPerTick', 'hardwareAddress', 'portLayout', 'name'],
+  router: ['traversalsPerTick', 'hardwareAddress', 'portLayout', 'name'],
+  program: ['cpu', 'memory', 'storage', 'name', 'description'],
+  floor: ['level', 'name'],
+  rack: ['name'],
+  port: ['name'],
+  userport: ['name'],
+  customer: ['customerName', 'name'],
+  customertype: ['name'],
+  domain: ['domainName', 'name'],
+  networkaddress: ['name'],
+  behaviorinsight: ['bandwidthPerTick', 'activeProbability', 'name'],
+  consumerbehavior: ['name'],
+  usagetype: ['label', 'name'],
+  player: ['name'],
+  rtable: ['name'],
+};
+
+function flagNameCandidates(specs: FlagSpec[]): Candidate[] {
+  const out: Candidate[] = [];
+  for (const f of specs) {
+    const takes = f.takesValue !== false;
+    out.push({
+      value: takes ? `--${f.name} ` : `--${f.name}`,
+      label: `--${f.name}`,
+      detail: f.summary ?? '',
+    });
+  }
+  return out.sort((a, b) => a.label!.localeCompare(b.label!));
+}
+
+function filterFlagNamePrefix(cands: Candidate[], partial: string): Candidate[] {
+  const strip = (s: string) => s.replace(/^[-]+/, '').toLowerCase();
+  const p = strip(partial);
+  const matches = cands.filter((c) => strip(c.label ?? c.value).startsWith(p));
+  matches.sort((a, b) => (a.label ?? a.value).localeCompare(b.label ?? b.value));
+  return matches.slice(0, 12);
+}
+
+function propKeyCandidates(nodeTypeRaw: string | undefined, keyPartial: string): Candidate[] {
+  if (!nodeTypeRaw || !isNodeType(nodeTypeRaw)) {
+    return filterPrefix([{ value: 'name=', label: 'name=', detail: 'property' }], keyPartial);
+  }
+  const keys = PROP_KEYS_FOR_NODE_TYPE[nodeTypeRaw] ?? ['name'];
+  return filterPrefix(
+    keys.map((k) => ({ value: `${k}=`, label: `${k}=`, detail: 'property' })),
+    keyPartial,
+  );
+}
+
+/**
+ * After fixed positionals, offer `--flags` and `--prop` key= values for mod/add node.
+ */
+function tryFlagCompletion(
+  def: CommandDef,
+  tokens: Token[],
+  consumed: number,
+  activeIndex: number,
+  isVirtualSlot: boolean,
+  partial: string,
+  replace: [number, number],
+): CompletionResult | undefined {
+  const flagSpecs = def.flags;
+  const argSpec = def.argSpec ?? [];
+  if (!flagSpecs?.length || !argSpec.length) return undefined;
+
+  const supportsProps =
+    def.name === 'mod node' || def.name === 'add node';
+
+  const hasVariadic = argSpec.some((s) => s.variadic);
+  const tail = tokens.slice(consumed);
+  const tailActive = activeIndex - consumed;
+
+  // Any `-…` token starts the flag region (so a lone `-` can Tab to `--prop`).
+  const firstFlagIdx = tail.findIndex((t) => t.value.startsWith('-'));
+  const posValues = tail.slice(0, firstFlagIdx === -1 ? tail.length : firstFlagIdx).map((t) => t.value);
+
+  if (firstFlagIdx === -1) {
+    if (hasVariadic) return undefined;
+    if (posValues.length < argSpec.length) return undefined;
+    const atEnd =
+      isVirtualSlot && tailActive === tail.length && posValues.length >= argSpec.length;
+    if (atEnd) {
+      return {
+        replace,
+        hint: 'flag',
+        candidates: flagNameCandidates(flagSpecs).slice(0, 12),
+      };
+    }
+    return undefined;
+  }
+  if (tailActive < firstFlagIdx) {
+    return undefined;
+  }
+
+  const flagSlice = tail.slice(firstFlagIdx);
+  const rel = tailActive - firstFlagIdx;
+  if (rel < 0 || rel >= flagSlice.length) {
+    if (isVirtualSlot && rel === flagSlice.length) {
+      const prev = flagSlice[flagSlice.length - 1];
+      if (
+        supportsProps &&
+        prev &&
+        prev.value === '--prop' &&
+        posValues.length > 0
+      ) {
+        return {
+          replace,
+          hint: 'property',
+          candidates: propKeyCandidates(posValues[0], ''),
+        };
+      }
+      return {
+        replace,
+        hint: 'flag',
+        candidates: flagNameCandidates(flagSpecs).slice(0, 12),
+      };
+    }
+    return undefined;
+  }
+
+  const tok = flagSlice[rel]!;
+
+  // `… --prop cpuTotal=8` — value is its own token after `--prop`.
+  if (!tok.value.startsWith('--')) {
+    if (
+      supportsProps &&
+      rel > 0 &&
+      flagSlice[rel - 1]!.value === '--prop' &&
+      posValues.length > 0
+    ) {
+      const keyPortion = partial.includes('=')
+        ? partial.slice(0, partial.indexOf('='))
+        : partial;
+      return {
+        replace,
+        hint: 'property',
+        candidates: propKeyCandidates(posValues[0], keyPortion),
+      };
+    }
+    if (
+      tok.value.startsWith('-') &&
+      !tok.value.startsWith('--') &&
+      supportsProps &&
+      posValues.length >= argSpec.length
+    ) {
+      return {
+        replace,
+        hint: 'flag',
+        candidates: filterFlagNamePrefix(flagNameCandidates(flagSpecs), partial),
+      };
+    }
+    return undefined;
+  }
+
+  const raw = tok.value.slice(2);
+  const eq = raw.indexOf('=');
+  const name = eq === -1 ? raw : raw.slice(0, eq);
+  const inline = eq === -1 ? undefined : raw.slice(eq + 1);
+
+  if (name === 'prop' && supportsProps && inline !== undefined) {
+    const keyPart = partial.startsWith('--prop=') ? partial.slice(7) : inline;
+    return {
+      replace,
+      hint: 'property',
+      candidates: propKeyCandidates(posValues[0], keyPart),
+    };
+  }
+
+  return {
+    replace,
+    hint: 'flag',
+    candidates: filterFlagNamePrefix(flagNameCandidates(flagSpecs), partial),
+  };
 }
 
 function filterPrefix(cands: Candidate[], partial: string): Candidate[] {

@@ -4,9 +4,8 @@
  * Node ids are unique per `type`. The runtime key used in maps is the
  * compound `{type}:{id}` so different types may share an id.
  *
- * Network addresses (for `port`, `uplink`, `networkaddress` nodes) are
- * globally unique across those three types; this is enforced in
- * `validation.ts` rather than by map shape.
+ * Network addresses (`networkaddress` ids) are validated separately from
+ * `port` / `userport` / `uplink` ids in `validation.ts`.
  */
 
 export const NODE_TYPES = [
@@ -18,6 +17,7 @@ export const NODE_TYPES = [
   'floor',
   'rack',
   'uplink',
+  'userport',
   'customer',
   'customertype',
   'rtable',

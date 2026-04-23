@@ -134,7 +134,7 @@ demand(I) = I.bandwidthPerTick * I.activeProbability
 
 Demand is attributed:
 
-1. To the owning customer's `networkaddress` or `UserPort` (via existing `Owner` edges) as the **source** endpoint.
+1. To the owning customer's `networkaddress` or `userport` (via existing `Owner` edges) as the **source** endpoint.
 2. To the server(s) fronting the matching `Provides` Usage Types as the **sink** endpoint (see routing below).
 
 For `domain` nodes with direct `Consumes` edges, the domain is itself the source endpoint at its `Owner`'s port.

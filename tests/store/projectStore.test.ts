@@ -117,6 +117,66 @@ describe('projectStore – remove / list', () => {
   });
 });
 
+describe('projectStore – load raw / manual source', () => {
+  it('loadRaw() skips parse, keeps text, clears graph', () => {
+    const { storage, project, graph } = bootstrap();
+    storage.setItem(
+      'tni.project.legacy',
+      '!tni v1\nserver s1 RJ45[1]\nport 0 RJ45\n',
+    );
+    project.loadRaw('legacy');
+    expect(project.manualSourceMode).toBe(true);
+    expect(project.manualSourceText).toContain('port 0 RJ45');
+    expect(graph.stats.nodes).toBe(0);
+    expect(project.active).toBe('legacy');
+    expect(project.dirty).toBe(true);
+  });
+
+  it('save() in manual mode writes manualSourceText, not serialized graph', () => {
+    const { storage, project, graph } = bootstrap();
+    storage.setItem('tni.project.legacy', '!tni v1\n');
+    project.loadRaw('legacy');
+    project.manualSourceText = '!tni v1\npatched\n';
+    project.save();
+    expect(storage.getItem('tni.project.legacy')).toBe('!tni v1\npatched\n');
+    expect(graph.stats.nodes).toBe(0);
+    expect(project.dirty).toBe(false);
+  });
+
+  it('applyManualSource() parses and exits manual mode', () => {
+    const { project, graph } = bootstrap();
+    project.newProject('x');
+    project.manualSourceText = '!tni v1\nfloor f9\n';
+    project.manualSourceMode = true;
+    graph.reset();
+    project.applyManualSource();
+    expect(project.manualSourceMode).toBe(false);
+    expect(graph.stats.nodes).toBe(1);
+    expect(project.dirty).toBe(false);
+  });
+
+  it('applyManualSource() throws when not in manual mode', () => {
+    const { project, graph } = bootstrap();
+    project.newProject('x');
+    graph.parseText('!tni v1\nfloor f1\n');
+    expect(() => project.applyManualSource()).toThrow(StorageError);
+  });
+
+  it('load() clears manual mode', () => {
+    const { storage, project, graph } = bootstrap();
+    storage.setItem(
+      'tni.project.good',
+      '!tni v1\nfloor f1\n',
+    );
+    storage.setItem('tni.project.bad', '!tni v1\nport 0 RJ45\n');
+    project.loadRaw('bad');
+    expect(project.manualSourceMode).toBe(true);
+    project.load('good');
+    expect(project.manualSourceMode).toBe(false);
+    expect(graph.stats.nodes).toBe(1);
+  });
+});
+
 describe('projectStore – export / import', () => {
   it('exportCurrent() returns text plus a suggested filename', () => {
     const { project, graph } = bootstrap();

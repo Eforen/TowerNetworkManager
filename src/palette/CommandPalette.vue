@@ -120,9 +120,12 @@ function acceptSelectedCandidate(): void {
 
   // Heuristic for "slot is now complete": the accepted value doesn't end
   // with a delimiter that signals more input for the SAME slot (like `[`
-  // for typed-refs). If complete and another positional arg may follow,
-  // append a space so the next slot's completer fires.
-  const endsMidSlot = cand.value.endsWith('[');
+  // for typed-refs, or `key=` for `--prop key=value`). If complete and
+  // another positional arg may follow, append a space so the next slot's
+  // completer fires.
+  const endsMidSlot =
+    cand.value.endsWith('[')
+    || (cand.detail === 'property' && cand.value.endsWith('='));
   if (!endsMidSlot) {
     const before = buffer.value.slice(0, caret.value);
     const after = buffer.value.slice(caret.value);

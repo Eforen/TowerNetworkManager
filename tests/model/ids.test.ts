@@ -41,7 +41,8 @@ describe('id regex', () => {
     expect(isValidNodeId('networkaddress', '@f1/c/1')).toBe(true);
     expect(isValidNodeId('port', 'sw1/port0')).toBe(true);
     expect(isValidNodeId('port', 'port0')).toBe(false);
-    expect(isValidNodeId('port', '12345')).toBe(true);
+    expect(isValidNodeId('port', '12345')).toBe(false);
+    expect(isValidNodeId('userport', '12345')).toBe(true);
     expect(isValidNodeId('port', '@f1/c/1')).toBe(false);
     expect(isValidNodeId('port', 'Bad-Port')).toBe(false);
     expect(isValidNodeId('server', 'db01')).toBe(true);

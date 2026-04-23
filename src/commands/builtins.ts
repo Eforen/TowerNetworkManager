@@ -25,10 +25,19 @@ const DEVICE_PORT_LAYOUT: ReadonlySet<string> = new Set([
   'router',
 ]);
 
+/** Positional media token on `add node userport|uplink <id> <token>`. */
+const CMD_LINE_MEDIA: Record<string, 'RJ45' | 'FiberOptic'> = {
+  rj45: 'RJ45',
+  rj: 'RJ45',
+  fiberoptic: 'FiberOptic',
+  fiber: 'FiberOptic',
+  f: 'FiberOptic',
+};
+
 const addNode: CommandDef = {
   name: 'add node',
   summary:
-    'Create a node. For server|switch|router, optional `portLayout` after id: `add node server s1 RJ45[2] FIBER` or `--prop portLayout=...`',
+    'Create a node. Devices: `add node server s1 RJ45[2] FIBER` or `--prop portLayout=…`. Customer port: `add node userport 52682 RJ45`. Uplink: `add node uplink mtvw FIBER`.',
   undoable: true,
   argSpec: [
     { name: 'nodeType', type: 'nodeType', required: true },
@@ -48,7 +57,7 @@ const addNode: CommandDef = {
     }
     const tail = pos.slice(1).map(String);
     const flagId = flagString(args.flags.id);
-    const tagList = flagList(args.flags.tag).map(String);
+    let tagList = flagList(args.flags.tag).map(String);
     const propEntries = flagList(args.flags.prop).map(String);
     const properties: Record<string, string | number | boolean> = {};
     const nameFlag = flagString(args.flags.name);
@@ -65,10 +74,35 @@ const addNode: CommandDef = {
     }
 
     const isLayoutDevice = DEVICE_PORT_LAYOUT.has(nodeType);
+    const isUserportOrUplink = nodeType === 'userport' || nodeType === 'uplink';
     let id: string;
     let linePortLayout = '';
 
-    if (isLayoutDevice) {
+    if (isUserportOrUplink) {
+      if (flagId !== undefined) {
+        return {
+          ok: false,
+          message: `use positionals only: add node ${nodeType} <id> <RJ45|FiberOptic|…> (no --id)`,
+        };
+      }
+      if (tail.length !== 2) {
+        return {
+          ok: false,
+          message: `expected add node ${nodeType} <id> <RJ45|FiberOptic|FIBER|…>`,
+        };
+      }
+      const rawId = String(tail[0]!);
+      id = nodeType === 'uplink' ? rawId.toLowerCase() : rawId;
+      const medKey = String(tail[1]!).toLowerCase();
+      const med = CMD_LINE_MEDIA[medKey];
+      if (!med) {
+        return {
+          ok: false,
+          message: `unknown media ${JSON.stringify(tail[1])} (try RJ45 or FIBER)`,
+        };
+      }
+      tagList = [...tagList, med];
+    } else if (isLayoutDevice) {
       if (flagId !== undefined) {
         id = String(flagId);
         linePortLayout = tail.join(' ').trim();
@@ -437,6 +471,54 @@ const loadCmd: CommandDef = {
   },
 };
 
+const loadRawCmd: CommandDef = {
+  name: 'load raw',
+  summary:
+    'Read project text from storage without parsing (fix old files, then apply source)',
+  argSpec: [{ name: 'slug', type: 'projectSlug', required: true }],
+  run(args, ctx): CommandResult {
+    const slug = String(args.positional[0]);
+    try {
+      ctx.projectStore.loadRaw(slug);
+      return {
+        ok: true,
+        message: `raw text for ${slug} — edit in Project drawer, then apply source or save`,
+      };
+    } catch (err) {
+      return { ok: false, message: (err as Error).message };
+    }
+  },
+};
+
+const applySourceCmd: CommandDef = {
+  name: 'apply source',
+  summary: 'Parse manual source buffer into the graph (after load raw)',
+  argSpec: [],
+  run(_args, ctx): CommandResult {
+    try {
+      ctx.projectStore.applyManualSource();
+      const n = ctx.graphStore.stats.nodes;
+      const e = ctx.graphStore.stats.edges;
+      return { ok: true, message: `parsed graph: ${n} nodes, ${e} edges` };
+    } catch (err) {
+      return { ok: false, message: (err as Error).message };
+    }
+  },
+};
+
+const cancelSourceCmd: CommandDef = {
+  name: 'cancel source',
+  summary: 'Exit manual source mode without parsing (discards buffer)',
+  argSpec: [],
+  run(_args, ctx): CommandResult {
+    if (!ctx.projectStore.manualSourceMode) {
+      return { ok: true, message: 'not in manual source mode' };
+    }
+    ctx.projectStore.cancelManualSource();
+    return { ok: true, message: 'manual source mode off' };
+  },
+};
+
 const newCmd: CommandDef = {
   name: 'new',
   summary: 'Create a new empty project',
@@ -498,6 +580,9 @@ export const BUILTIN_COMMANDS: CommandDef[] = [
   help,
   saveCmd,
   loadCmd,
+  loadRawCmd,
+  applySourceCmd,
+  cancelSourceCmd,
   newCmd,
   listProjects,
   rmProject,

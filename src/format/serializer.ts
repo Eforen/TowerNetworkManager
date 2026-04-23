@@ -47,6 +47,7 @@ export const ENTITY_TYPE_ORDER: readonly NodeType[] = [
   'rack',
   'uplink',
   'port',
+  'userport',
   'switch',
   'router',
   'server',
@@ -121,6 +122,8 @@ export function serialize(graph: Graph): string {
 
 function serializeNode(node: Node, graph: Graph): string {
   if (node.type === 'port') return serializePortNode(node);
+  if (node.type === 'userport') return serializeUserportNode(node);
+  if (node.type === 'uplink') return serializeUplinkNode(node);
 
   const parts: string[] = [node.type, formatIdentity(node.type, node.id)];
   if (node.type === 'server' || node.type === 'switch' || node.type === 'router') {
@@ -153,24 +156,11 @@ function serializeNode(node: Node, graph: Graph): string {
 }
 
 /**
- * Canonical port line: `port <N> <MEDIA> [#NonMediaTag ...] [k=v ...]`.
- *
- *   - device port: id is `port<N>`, N is the trailing digits.
- *   - UserPort: id is bare digits (hardware address); `#UserPort` tag
- *     emitted after media so it round-trips.
- *   - media keyword is positional; not emitted as `#RJ45` / `#FiberOptic`.
+ * Device port line: `port "parent/port0" <MEDIA> …` (media positional).
  */
 function serializePortNode(node: Node): string {
-  const isUser = node.tags.includes('UserPort');
   const media = node.tags.includes('FiberOptic') ? 'FiberOptic' : 'RJ45';
-  let second: string;
-  if (isUser) {
-    second = node.id;
-  } else if (node.id.includes('/')) {
-    second = quoteString(node.id);
-  } else {
-    second = node.id.replace(/^port/, '');
-  }
+  const second = node.id.includes('/') ? quoteString(node.id) : node.id.replace(/^port/, '');
   const parts: string[] = ['port', second, media];
 
   const defaults = DEFAULT_TAGS_BY_TYPE.port ?? [];
@@ -181,6 +171,46 @@ function serializePortNode(node: Node): string {
   for (const t of emittedTags) parts.push(`#${t}`);
 
   const defaultProps = DEFAULT_PROPERTIES_BY_TYPE.port ?? {};
+  const keys = Object.keys(node.properties).sort((a, b) => a.localeCompare(b));
+  for (const k of keys) {
+    const v = node.properties[k];
+    if (defaultProps[k] !== undefined && defaultProps[k] === v) continue;
+    parts.push(`${k}=${formatValue(v)}`);
+  }
+  return parts.join(' ');
+}
+
+/** `userport <hardware> <MEDIA>` — media positional, not `#RJ45`. */
+function serializeUserportNode(node: Node): string {
+  const media = node.tags.includes('FiberOptic') ? 'FiberOptic' : 'RJ45';
+  const parts: string[] = ['userport', node.id, media];
+  const defaults = DEFAULT_TAGS_BY_TYPE.userport ?? [];
+  const hidden = new Set<string>([...defaults, 'RJ45', 'FiberOptic']);
+  const emittedTags = node.tags
+    .filter((t) => !hidden.has(t))
+    .sort((a, b) => a.localeCompare(b));
+  for (const t of emittedTags) parts.push(`#${t}`);
+  const defaultProps = DEFAULT_PROPERTIES_BY_TYPE.userport ?? {};
+  const keys = Object.keys(node.properties).sort((a, b) => a.localeCompare(b));
+  for (const k of keys) {
+    const v = node.properties[k];
+    if (defaultProps[k] !== undefined && defaultProps[k] === v) continue;
+    parts.push(`${k}=${formatValue(v)}`);
+  }
+  return parts.join(' ');
+}
+
+/** `uplink <id> <MEDIA>` — media positional. */
+function serializeUplinkNode(node: Node): string {
+  const media = node.tags.includes('FiberOptic') ? 'FiberOptic' : 'RJ45';
+  const parts: string[] = ['uplink', node.id, media];
+  const defaults = DEFAULT_TAGS_BY_TYPE.uplink ?? [];
+  const hidden = new Set<string>([...defaults, 'RJ45', 'FiberOptic']);
+  const emittedTags = node.tags
+    .filter((t) => !hidden.has(t))
+    .sort((a, b) => a.localeCompare(b));
+  for (const t of emittedTags) parts.push(`#${t}`);
+  const defaultProps = DEFAULT_PROPERTIES_BY_TYPE.uplink ?? {};
   const keys = Object.keys(node.properties).sort((a, b) => a.localeCompare(b));
   for (const k of keys) {
     const v = node.properties[k];
@@ -239,8 +269,10 @@ function serializeEdgeLine(pe: PreparedEdge): string {
 
 function formatIdentity(type: NodeType, id: string): string {
   if (isNetAddrType(type)) return id; // e.g. @f1/c/1
+  if (type === 'userport') {
+    return HARDWARE_ADDR_RE.test(id) ? id : quoteString(id);
+  }
   if (type === 'port') {
-    if (HARDWARE_ADDR_RE.test(id)) return id;
     if (id.includes('/')) return quoteString(id);
     return id;
   }

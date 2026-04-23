@@ -14,14 +14,19 @@ import {
   useProjectStore,
 } from '@/store';
 
-function bootstrap(): { ctx: CommandContext; registry: CommandRegistry } {
+function bootstrap(): {
+  ctx: CommandContext;
+  registry: CommandRegistry;
+  storage: MemoryStorage;
+} {
   setActivePinia(createPinia());
   const registry = new CommandRegistry();
   registerBuiltins(registry);
   const graphStore = useGraphStore();
   const projectStore = useProjectStore();
   const fsmStore = useFsmStore();
-  projectStore.setStorage(new MemoryStorage());
+  const storage = new MemoryStorage();
+  projectStore.setStorage(storage);
   const history = new CommandHistory(new MemoryStorage());
   const ctx: CommandContext = {
     graph: graphStore.graph,
@@ -32,7 +37,7 @@ function bootstrap(): { ctx: CommandContext; registry: CommandRegistry } {
     history,
     log: () => undefined,
   };
-  return { ctx, registry };
+  return { ctx, registry, storage };
 }
 
 describe('executor pipeline', () => {
@@ -98,15 +103,11 @@ describe('executor pipeline', () => {
     expect(s?.properties.portLayout).toBeUndefined();
   });
 
-  it('add node port 0 with #UserPort creates consumer hardware id', async () => {
+  it('add node userport creates consumer hardware id', async () => {
     const { ctx, registry } = bootstrap();
-    const r = await execute(
-      'add node port 0 --tag UserPort --tag RJ45',
-      registry,
-      ctx,
-    );
+    const r = await execute('add node userport 0 RJ45', registry, ctx);
     expect(r.ok).toBe(true);
-    expect(ctx.graph.getNode('port', '0')).toBeDefined();
+    expect(ctx.graph.getNode('userport', '0')).toBeDefined();
   });
 
   it('rm node removes the node', async () => {
@@ -149,6 +150,19 @@ describe('executor pipeline', () => {
     expect(ctx.projectStore.dirty).toBe(false);
   });
 
+  it('load raw + apply source parses stored text', async () => {
+    const { ctx, registry, storage } = bootstrap();
+    storage.setItem('tni.project.fix', '!tni v1\nfloor f2\n');
+    const r1 = await execute('load raw fix', registry, ctx);
+    expect(r1.ok).toBe(true);
+    expect(ctx.projectStore.manualSourceMode).toBe(true);
+    expect(ctx.graphStore.stats.nodes).toBe(0);
+    const r2 = await execute('apply source', registry, ctx);
+    expect(r2.ok).toBe(true);
+    expect(ctx.projectStore.manualSourceMode).toBe(false);
+    expect(ctx.graphStore.stats.nodes).toBe(1);
+  });
+
   it('help lists registered commands', async () => {
     const { ctx, registry } = bootstrap();
     const r = await execute('help', registry, ctx);
@@ -165,9 +179,7 @@ describe('add link', () => {
 
   async function seed(ctx: CommandContext, registry: CommandRegistry) {
     await execute('add node customer organic-goat', registry, ctx);
-    await execute('add node port 52682', registry, ctx);
-    await execute('tag add port 52682 UserPort', registry, ctx);
-    await execute('tag add port 52682 RJ45', registry, ctx);
+    await execute('add node userport 52682 RJ45', registry, ctx);
     await execute('add node networkaddress @f1/c/3', registry, ctx);
   }
 
@@ -175,7 +187,7 @@ describe('add link', () => {
     const { ctx, registry } = bootstrap();
     await seed(ctx, registry);
     const r = await execute(
-      'add link customer[organic-goat] port[52682] Owner',
+      'add link customer[organic-goat] userport[52682] Owner',
       registry,
       ctx,
     );
@@ -184,7 +196,7 @@ describe('add link', () => {
     expect(edges.length).toBe(1);
     expect(edges[0].relation).toBe('Owner');
     expect(edges[0].fromKey).toBe('customer:organic-goat');
-    expect(edges[0].toKey).toBe('port:52682');
+    expect(edges[0].toKey).toBe('userport:52682');
   });
 
   it('infers the relation when only one pair is legal', async () => {
@@ -235,7 +247,7 @@ describe('add link', () => {
     const { ctx, registry } = bootstrap();
     await seed(ctx, registry);
     const r = await execute(
-      'add link customer[organic-goat] port[52682] AssignedTo',
+      'add link customer[organic-goat] userport[52682] AssignedTo',
       registry,
       ctx,
     );
@@ -247,7 +259,7 @@ describe('add link', () => {
     const { ctx, registry } = bootstrap();
     await seed(ctx, registry);
     const r = await execute(
-      'add link customer[organic-goat] port[99999] Owner',
+      'add link customer[organic-goat] userport[99999] Owner',
       registry,
       ctx,
     );
@@ -259,7 +271,7 @@ describe('add link', () => {
     const { ctx, registry } = bootstrap();
     await seed(ctx, registry);
     const r = await execute(
-      'add link organic-goat port[52682] Owner',
+      'add link organic-goat userport[52682] Owner',
       registry,
       ctx,
     );

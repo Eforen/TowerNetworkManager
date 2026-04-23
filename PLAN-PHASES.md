@@ -1,6 +1,6 @@
 # TNI PWA - Phased Implementation Plan
 
-Phased build of the Tower Networking Inc PWA per [docs/specs/](docs/specs/). Stack: **Vite + Vue 3 (`<script setup lang="ts">`) + TypeScript strict + Pinia + plain CSS with `--tni-*` custom properties**. Pause for review after each phase.
+Phased build of the Tower Networking Manager PWA per [docs/specs/](docs/specs/). Stack: **Vite + Vue 3 (`<script setup lang="ts">`) + TypeScript strict + Pinia + plain CSS with `--tni-*` custom properties**. Pause for review after each phase.
 
 ## Stack & Conventions
 

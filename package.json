@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "description": "Tower Networking Inc - client-side PWA for modeling and analyzing tower networks per docs/specs.",
+  "description": "Tower Networking Manager - client-side PWA for modeling and analyzing tower networks per docs/specs.",
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && vite build",

@@ -17,7 +17,8 @@ All commands exposed by the palette defined in [commandline.md](commandline.md).
 - `add node <nodeType> [ <id> [ <portLayout>… ] ] [--id=<id>] [--name=<name>] [--tag=<tag>] (repeatable) [--prop <key>=<val>] (repeatable)`
   - Creates a node. Type must be a known node type. Tags must be canonical.
   - **`server` / `switch` / `router`:** after `<id>`, you may add **inline `portLayout`** as one or more tokens (file-format `RJ45[2] FIBER[1] …`). Example: `add node server 12345 RJ45[2] FIBER[1]`. If you set `--id=…`, all remaining positionals are layout: `add node server --id=s1 RJ45[2] FIBER[1]`. You can also set layout with `--prop portLayout=…` (quote if the value has spaces). Inline layout and `--prop portLayout=…` are merged; a non-empty inline layout wins for `portLayout` when both are present.
-  - For **`port` only** (and no `--id`), if the inline id looks like `N-M` (two non-negative integers), creates device ports `portN` through `portM` (same as `port N-M …` in the text format). Example: `add node port 0-1` adds `port0` and `port1`. Max span: 100 ports.
+  - **`userport`:** exactly two positionals after the type, no `--id`: `add node userport <hardwareAddress> <RJ45|FIBER|…>`. The hardware address is 1–5 digits (customer gear id). Media uses the same aliases as in the file format (`RJ45`, `FIBER`, etc.).
+  - **`uplink`:** same shape: `add node uplink <code> <RJ45|FIBER|…>`. The uplink code is four letters (ISP/building code); stored lowercase.
   - Example: `add node Server --name=db01 --prop address=10.0.0.5`
 
 - `rm node <id> [--force]`
@@ -133,6 +134,9 @@ Pass-through to [filters.md](filters.md). Not undoable (filter state has its own
 
 - `save [<slug>]` — Writes project to `localStorage[tni.project.<slug>]`. Default `<slug>` = current project.
 - `load <slug>` — Reads project from `localStorage`. Switches active project. Not undoable (clears undo stack).
+- `load raw <slug>` — Reads bytes into the manual source editor **without** parsing. Use when an old file fails `load` (e.g. migrate `port` lines, then `apply source` or `save` raw text).
+- `apply source` — Parses the manual source buffer into the graph (after `load raw`). Fails with the usual parse error if still invalid.
+- `cancel source` — Leaves manual source mode and clears the buffer without parsing.
 - `new <slug>` — Creates an empty project.
 - `rm project <slug> [--force]` — Removes project from localStorage. Not undoable (warns).
 - `list projects` — Prints project slugs. Not undoable.

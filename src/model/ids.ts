@@ -12,7 +12,7 @@ export const NET_ADDR_RE = /^@[A-Za-z0-9_\-/]{1,9}$/;
 
 /**
  * Hardware address: 1..5 numeric digits. Used as:
- *   - id of a `port` tagged `UserPort`.
+ *   - id of a `userport` node (customer endpoint gear).
  *   - `hardwareAddress` property on `server` / `switch` / `router`.
  */
 export const HARDWARE_ADDR_RE = /^\d{1,5}$/;
@@ -20,8 +20,8 @@ export const HARDWARE_ADDR_RE = /^\d{1,5}$/;
 /**
  * Device port id: literal `port` followed by one or more digits
  * (`port0`, `port1`, `port10`). In-game port ids are always this shape —
- * no `eth0`, no custom slugs. UserPort (consumer) ports instead use
- * a pure-digit hardware address (see `HARDWARE_ADDR_RE`).
+ * no `eth0`, no custom slugs. Consumer endpoints use type `userport` with a
+ * pure-digit hardware address (see `HARDWARE_ADDR_RE`).
  * @deprecated Standalone `port0` for NICs; prefer {@link DEVICE_PORT_COMPOSITE_RE}.
  */
 export const PORT_SLUG_RE = /^port\d+$/;
@@ -42,10 +42,10 @@ export function parseCompositeDevicePortId(
 }
 
 /**
- * Uplink id: exactly 4 lowercase letters, e.g. `comc`, `attn`. Not a
- * network address — uplinks identify an ISP peering endpoint.
+ * Uplink id: exactly 4 letters (case-insensitive; stored lowercased), e.g.
+ * `mtvw`. Not a network address — uplinks identify an ISP peering endpoint.
  */
-export const UPLINK_ID_RE = /^[a-z]{4}$/;
+export const UPLINK_ID_RE = /^[a-zA-Z]{4}$/;
 
 /**
  * Program slugs allow underscores anywhere (game-style ids like `padu_v1`).
@@ -61,8 +61,8 @@ export const TAG_RE = /^[A-Z][A-Za-z0-9]*$/;
 
 /**
  * Types that use a network address (`@...`) as their id. Only
- * `networkaddress` qualifies: `port` uses a slug/digit id and `uplink`
- * uses a 4-letter ISP code (see `UPLINK_ID_RE`).
+ * `networkaddress` uses `@…` ids. `port` / `userport` / `uplink` use other
+ * shapes (see `isValidNodeId`).
  */
 export const NET_ADDR_TYPES: readonly NodeType[] = [
   'networkaddress',
@@ -76,10 +76,8 @@ export function isNetAddrType(type: NodeType): boolean {
  * Validate that an `id` is well-formed for its `type`.
  *
  * - `networkaddress` / `uplink`: must match `NET_ADDR_RE`.
- * - `port`: either hardware address (`HARDWARE_ADDR_RE`) for UserPorts,
- *   or plain slug (`PORT_SLUG_RE`) for device NICs. Which one is required
- *   is decided by tags and enforced in `validation.ts`; here we accept
- *   either shape.
+ * - `port`: composite device id `parentId/portN` only.
+ * - `userport`: hardware address `HARDWARE_ADDR_RE`.
  * - `program`: `PROGRAM_ID_RE`.
  * - `usagetype`: `USAGE_TYPE_ID_RE`.
  * - `domain`: lenient domain regex.
@@ -88,8 +86,8 @@ export function isNetAddrType(type: NodeType): boolean {
 export function isValidNodeId(type: NodeType, id: string): boolean {
   if (isNetAddrType(type)) return NET_ADDR_RE.test(id);
   if (type === 'uplink') return UPLINK_ID_RE.test(id);
+  if (type === 'userport') return HARDWARE_ADDR_RE.test(id);
   if (type === 'port') {
-    if (HARDWARE_ADDR_RE.test(id)) return true;
     if (DEVICE_PORT_COMPOSITE_RE.test(id)) return true;
     return false;
   }

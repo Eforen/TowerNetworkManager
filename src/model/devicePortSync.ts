@@ -50,7 +50,7 @@ export function isDeviceLayoutManagedPort(
   graph: Graph,
   port: Node,
 ): boolean {
-  if (port.type !== 'port' || port.tags.includes('UserPort')) return false;
+  if (port.type !== 'port') return false;
   const c = parseCompositeDevicePortId(port.id);
   if (!c) return false;
   const dev = findDeviceForPortParentId(graph, c.parentId);

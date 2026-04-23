@@ -95,17 +95,17 @@ describe('format/serializer – node formatting', () => {
     expect(line).not.toMatch(/#Physical|#Device|#Network|#Switch/);
   });
 
-  it('serializes UserPort with positional media and remaining tags', () => {
+  it('serializes userport with positional media and remaining tags', () => {
     const g = new Graph();
     g.addNode({
-      type: 'port',
+      type: 'userport',
       id: '12345',
-      tags: ['UserPort', 'RJ45'],
+      tags: ['RJ45', 'UserPort'],
       properties: { deviceAddress: 12345 },
     });
     const out = serialize(g);
-    const line = out.split('\n').find((l) => l.startsWith('port '));
-    expect(line).toBe('port 12345 RJ45 #UserPort deviceAddress=12345');
+    const line = out.split('\n').find((l) => l.startsWith('userport '));
+    expect(line).toBe('userport 12345 RJ45 #UserPort deviceAddress=12345');
   });
 
   it('serializes a composite (non–layout-only) port id with quotes', () => {

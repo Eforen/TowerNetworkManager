@@ -12,6 +12,7 @@ import type { NodeType, Properties } from './types';
 export const DEFAULT_TAGS_BY_TYPE: Record<NodeType, readonly string[]> = {
   player: ['Logical', 'Player', 'User'],
   port: ['Physical', 'NetworkPort'],
+  userport: ['Physical', 'NetworkPort'],
   uplink: ['Physical', 'NetworkPort', 'Uplink'],
   switch: ['Physical', 'Device', 'Network', 'Switch'],
   router: ['Physical', 'Device', 'Network', 'Router'],

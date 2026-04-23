@@ -16,9 +16,8 @@ describe('indices: byType and byTag', () => {
 
   it('tracks nodes by tag', () => {
     const g = new Graph();
-    g.addNode({ type: 'port', id: '12345', tags: ['RJ45', 'UserPort'] });
+    g.addNode({ type: 'userport', id: '12345', tags: ['RJ45'] });
     g.addNode({ type: 'port', id: 'sw1/port0', tags: ['RJ45'] });
-    expect(g.nodesWithTag('UserPort').map((n) => n.id)).toEqual(['12345']);
     expect(g.nodesWithTag('RJ45').map((n) => n.id).sort()).toEqual([
       '12345',
       'sw1/port0',
@@ -27,9 +26,9 @@ describe('indices: byType and byTag', () => {
 
   it('updates byTag on updateNode', () => {
     const g = new Graph();
-    g.addNode({ type: 'port', id: '12345', tags: ['RJ45'] });
+    g.addNode({ type: 'userport', id: '12345', tags: ['RJ45'] });
     expect(g.nodesWithTag('UserPort')).toHaveLength(0);
-    g.updateNode('port', '12345', { tags: ['RJ45', 'UserPort'] });
+    g.updateNode('userport', '12345', { tags: ['RJ45', 'UserPort'] });
     expect(g.nodesWithTag('UserPort').map((n) => n.id)).toEqual(['12345']);
   });
 });
@@ -76,6 +75,18 @@ describe('indices: floorOf', () => {
     });
     expect(g.floorOf('rack', 'r1')).toBe(2);
     expect(g.floorOf('server', 'db01')).toBe(2);
+  });
+
+  it('assigns floor to customer via FloorAssignment', () => {
+    const g = new Graph();
+    g.addNode({ type: 'floor', id: 'f2' });
+    g.addNode({ type: 'customer', id: 'c1' });
+    g.addEdge({
+      relation: 'FloorAssignment',
+      from: { type: 'floor', id: 'f2' },
+      to: { type: 'customer', id: 'c1' },
+    });
+    expect(g.floorOf('customer', 'c1')).toBe(2);
   });
 
   it('returns undefined for unassigned nodes', () => {

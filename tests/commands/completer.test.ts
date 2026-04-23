@@ -91,6 +91,16 @@ describe('completer', () => {
     expect(candidates.length).toBe(0);
   });
 
+  // Regression: virtual slot after `--prop ` re-listed `--id` instead of keys.
+  it('completes property keys after `--prop` with trailing space on add node', () => {
+    const r = buildRegistry();
+    const g = buildGraph();
+    const input = 'add node server 55153 --prop ';
+    const { candidates, hint } = complete(input, input.length, r, g);
+    expect(hint).toBe('property');
+    expect(candidates.some((c) => c.value === 'cpuTotal=')).toBe(true);
+  });
+
   // Regression: typing the FULL multi-word command name and hitting Tab
   // would replace only the last token, producing 'add add node'.
   it('expands replace range to cover the whole command name on Tab', () => {
@@ -189,7 +199,7 @@ describe('add link completions', () => {
     g.addNode({ type: 'customer', id: 'organic-goat' });
     g.addNode({ type: 'customer', id: 'casual-dweller' });
     g.addNode({ type: 'networkaddress', id: '@f1/c/3' });
-    g.addNode({ type: 'port', id: '52682', tags: ['UserPort', 'RJ45'] });
+    g.addNode({ type: 'userport', id: '52682', tags: ['RJ45'] });
     g.addNode({ type: 'server', id: 'db01' });
     return g;
   }
@@ -197,7 +207,7 @@ describe('add link completions', () => {
   function serverlessGraph(): Graph {
     const g = new Graph();
     g.addNode({ type: 'customer', id: 'organic-goat' });
-    g.addNode({ type: 'port', id: '52682', tags: ['UserPort', 'RJ45'] });
+    g.addNode({ type: 'userport', id: '52682', tags: ['RJ45'] });
     return g;
   }
 
@@ -267,7 +277,7 @@ describe('add link completions', () => {
   it('filters relation candidates by the typed partial', () => {
     const r = buildRegistry();
     const g = linkGraph();
-    const input = 'add link customer[organic-goat] port[52682] Ow';
+    const input = 'add link customer[organic-goat] userport[52682] Ow';
     const { candidates } = complete(input, input.length, r, g);
     const values = candidates.map((c) => c.value);
     expect(values).toContain('Owner');
@@ -302,11 +312,11 @@ describe('add link completions', () => {
   it('emits a no-match sentinel when ids do not match the prefix', () => {
     const r = buildRegistry();
     const g = linkGraph();
-    // `port` exists (id 52682) but no id starts with `z`.
-    const input = 'add link port[z';
+    // `userport` exists (id 52682) but no id starts with `z`.
+    const input = 'add link userport[z';
     const { candidates } = complete(input, input.length, r, g);
     expect(candidates.length).toBe(1);
-    expect(candidates[0].label).toMatch(/no port.*matches/);
+    expect(candidates[0].label).toMatch(/no userport.*matches/);
   });
 
   it('applyCandidate finishes a typed-ref id without duplicating', () => {
@@ -320,5 +330,43 @@ describe('add link completions', () => {
     expect(cand).toBeDefined();
     const out = applyCandidate(input, cand!, replace);
     expect(out.buffer).toBe('add link customer[organic-goat]');
+  });
+});
+
+describe('mod node flag completion', () => {
+  function rg(): { r: ReturnType<typeof buildRegistry>; g: Graph } {
+    const r = buildRegistry();
+    const g = new Graph();
+    g.addNode({ type: 'server', id: '43354', properties: { cpuTotal: 8 } });
+    return { r, g };
+  }
+
+  it('suggests --prop after full positionals at EOL', () => {
+    const { r, g } = rg();
+    const input = 'mod node server 43354 ';
+    const { candidates } = complete(input, input.length, r, g);
+    const values = candidates.map((c) => c.value.trim());
+    expect(values.some((v) => v.startsWith('--prop'))).toBe(true);
+  });
+
+  it('completes single-dash prefix to --prop', () => {
+    const { r, g } = rg();
+    const input = 'mod node server 43354 -';
+    const { candidates } = complete(input, input.length, r, g);
+    expect(candidates.some((c) => c.label?.includes('prop'))).toBe(true);
+  });
+
+  it('suggests property keys after --prop ', () => {
+    const { r, g } = rg();
+    const input = 'mod node server 43354 --prop c';
+    const { candidates } = complete(input, input.length, r, g);
+    expect(candidates.some((c) => c.value.startsWith('cpuTotal='))).toBe(true);
+  });
+
+  it('suggests property keys for inline --prop=', () => {
+    const { r, g } = rg();
+    const input = 'mod node server 43354 --prop=c';
+    const { candidates } = complete(input, input.length, r, g);
+    expect(candidates.some((c) => c.value.startsWith('cpuTotal='))).toBe(true);
   });
 });

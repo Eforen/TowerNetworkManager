@@ -60,9 +60,9 @@ describe('validation: tags', () => {
     expect(codes(validate(g))).toContain('tag.malformed');
   });
 
-  it('errors when port has no media tag', () => {
+  it('errors when userport has no media tag', () => {
     const g = new Graph();
-    g.addNode({ type: 'port', id: '12' });
+    g.addNode({ type: 'userport', id: '12', tags: [] });
     expect(codes(validate(g))).toContain('port.noMedia');
   });
 
@@ -125,6 +125,18 @@ describe('validation: edge endpoint rules', () => {
     expect(codes(validate(g))).toContain('cable.mediaMismatch');
   });
 
+  it('accepts FloorAssignment floor -> customer', () => {
+    const g = new Graph();
+    g.addNode({ type: 'floor', id: 'f1' });
+    g.addNode({ type: 'customer', id: 'c1' });
+    g.addEdge({
+      relation: 'FloorAssignment',
+      from: { type: 'floor', id: 'f1' },
+      to: { type: 'customer', id: 'c1' },
+    });
+    expect(codes(validate(g))).not.toContain('edge.badEndpoints');
+  });
+
   it('rejects FloorAssignment whose from is not a floor', () => {
     const g = new Graph();
     g.addNode({ type: 'rack', id: 'r1' });
@@ -163,7 +175,7 @@ describe('validation: edge endpoint rules', () => {
     expect(validate(g).errors).toHaveLength(0);
   });
 
-  it('Owner customer -> port only when port has UserPort tag', () => {
+  it('Owner customer -> device port is not an allowed pair', () => {
     const g = new Graph();
     g.addNode({ type: 'customer', id: 'organic-goat' });
     g.addNode({
@@ -177,7 +189,7 @@ describe('validation: edge endpoint rules', () => {
       from: { type: 'customer', id: 'organic-goat' },
       to: { type: 'port', id: 's1/port0' },
     });
-    expect(codes(validate(g))).toContain('owner.portNotUserPort');
+    expect(codes(validate(g))).toContain('edge.badEndpoints');
   });
 
   it('Consumes.required must be non-negative', () => {
@@ -247,7 +259,7 @@ describe('validation: clean graph has no errors', () => {
       properties: { portLayout: 'RJ45' },
     });
     g.addNode({ type: 'port', id: 'sw1/port0', tags: ['RJ45'] });
-    g.addNode({ type: 'port', id: '12345', tags: ['RJ45', 'UserPort'] });
+    g.addNode({ type: 'userport', id: '12345', tags: ['RJ45'] });
     g.addEdge({
       relation: 'FloorAssignment',
       from: { type: 'floor', id: 'f1' },
@@ -261,7 +273,7 @@ describe('validation: clean graph has no errors', () => {
     g.addEdge({
       relation: 'NetworkCableLinkRJ45',
       from: { type: 'port', id: 'sw1/port0' },
-      to: { type: 'port', id: '12345' },
+      to: { type: 'userport', id: '12345' },
     });
     expect(validate(g).errors).toEqual([]);
   });

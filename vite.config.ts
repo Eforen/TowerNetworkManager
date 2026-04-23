@@ -10,7 +10,7 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.svg'],
       manifest: {
-        name: 'Tower Networking Inc',
+        name: 'Tower Networking Manager',
         short_name: 'TNI',
         description:
           'Client-side PWA for modeling and analyzing tower networks.',

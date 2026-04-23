@@ -1,6 +1,6 @@
 # App State Machine
 
-Top-level finite state machine for the Tower Networking Inc PWA. Implemented in Vue with a single store (Pinia or `reactive()` composable) exposing the current state plus event dispatchers. Only one top-level state is active at a time; the graph view is always rendered underneath.
+Top-level finite state machine for the Tower Networking Manager PWA. Implemented in Vue with a single store (Pinia or `reactive()` composable) exposing the current state plus event dispatchers. Only one top-level state is active at a time; the graph view is always rendered underneath.
 
 ## States
 

@@ -211,6 +211,18 @@ describe('CommandPalette – keyboard flow', () => {
     w.unmount();
   });
 
+  it('does not append a space after Tab-completing a --prop property key', async () => {
+    const w = makePalette();
+    await typeInput(w, 'add node server 55153 --prop cpuTot');
+    await keydown(w, 'Tab');
+    const input = w.find('input.tni-palette__input')
+      .element as HTMLInputElement;
+    expect(input.value).toBe('add node server 55153 --prop cpuTotal=');
+    expect(input.value.endsWith('= ')).toBe(false);
+    expect(input.selectionStart).toBe(input.value.length);
+    w.unmount();
+  });
+
   // Regression for the user-reported bug: typing `add link server[` char
   // by char should surface server[<id>] candidates, not wait for a trailing
   // space and backspace roundtrip before the popup appears.

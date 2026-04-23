@@ -9,6 +9,18 @@
 
 import type { NodeType, RelationName } from './types';
 
+/** Undirected cable endpoints: device `port`, customer `userport`, `uplink`. */
+const NETWORK_CABLE_PAIRS: ReadonlyArray<readonly [NodeType, NodeType]> = (() => {
+  const kinds: NodeType[] = ['port', 'userport', 'uplink'];
+  const out: [NodeType, NodeType][] = [];
+  for (const a of kinds) {
+    for (const b of kinds) {
+      out.push([a, b]);
+    }
+  }
+  return out;
+})();
+
 export interface RelationMeta {
   name: RelationName;
   directed: boolean;
@@ -48,12 +60,12 @@ export const RELATION_META: Record<RelationName, RelationMeta> = {
     directed: true,
     strength: 4,
     pairs: [
-      ['customer', 'port'], // UserPort-tagged, checked in validation
+      ['customer', 'userport'],
       ['customer', 'domain'],
       ['customer', 'customertype'],
       ['customer', 'consumerbehavior'],
       ['customer', 'producerbehavior'],
-      ['player', 'port'],
+      ['player', 'userport'],
       ['player', 'domain'],
       ['player', 'customertype'],
       ['player', 'consumerbehavior'],
@@ -70,6 +82,7 @@ export const RELATION_META: Record<RelationName, RelationMeta> = {
       ['networkaddress', 'router'],
       ['networkaddress', 'switch'],
       ['networkaddress', 'port'],
+      ['networkaddress', 'userport'],
       ['networkaddress', 'uplink'],
       ['networkaddress', 'customer'],
       ['networkaddress', 'player'],
@@ -79,24 +92,14 @@ export const RELATION_META: Record<RelationName, RelationMeta> = {
     name: 'NetworkCableLinkRJ45',
     directed: false,
     strength: 1.5,
-    pairs: [
-      ['port', 'port'],
-      ['port', 'uplink'],
-      ['uplink', 'port'],
-      ['uplink', 'uplink'],
-    ],
+    pairs: NETWORK_CABLE_PAIRS,
     edgeProperties: ['linkCapacity'],
   },
   NetworkCableLinkFiber: {
     name: 'NetworkCableLinkFiber',
     directed: false,
     strength: 1.0,
-    pairs: [
-      ['port', 'port'],
-      ['port', 'uplink'],
-      ['uplink', 'port'],
-      ['uplink', 'uplink'],
-    ],
+    pairs: NETWORK_CABLE_PAIRS,
     edgeProperties: ['linkCapacity'],
   },
   FloorAssignment: {
@@ -109,7 +112,9 @@ export const RELATION_META: Record<RelationName, RelationMeta> = {
       ['floor', 'router'],
       ['floor', 'rack'],
       ['floor', 'port'],
+      ['floor', 'userport'],
       ['floor', 'uplink'],
+      ['floor', 'customer'],
     ],
   },
   RackAssignment: {
@@ -136,6 +141,7 @@ export const RELATION_META: Record<RelationName, RelationMeta> = {
     pairs: [
       ['rtable', 'rtable'],
       ['rtable', 'port'],
+      ['rtable', 'userport'],
       ['rtable', 'uplink'],
       ['rtable', 'networkaddress'],
     ],

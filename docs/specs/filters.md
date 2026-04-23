@@ -7,7 +7,7 @@ Filters shrink what the graph view renders without mutating the model. Consumed 
 1. **Floor** — multi-select over known floor numbers plus `unassigned`.
    - Values: `0`, `1`, `2`, `3`, ..., `unassigned` (nodes with no `FloorAssignment` edge).
 2. **Tag** — multi-select over the canonical tag list in [graphdata.md](graphdata.md).
-   - e.g. `Physical`, `Logical`, `NetworkPort`, `Device`, `Router`, `Switch`, `Server`, `Rack`, `Floor`, `Customer`, `DomainName`, `User`, `Uplink`, `RJ45`, `FiberOptic`, `UserPort`, `Routing`.
+   - e.g. `Physical`, `Logical`, `NetworkPort`, `Device`, `Router`, `Switch`, `Server`, `Rack`, `Floor`, `Customer`, `DomainName`, `User`, `Uplink`, `RJ45`, `FiberOptic`, `Routing`.
 3. **Node type** — multi-select over node types from [graphdata.md](graphdata.md).
 4. **Edge type** — multi-select over relationship types (NIC, Owner, Route, FloorAssignment, RackAssignment, NetworkCableLinkRJ45, NetworkCableLinkFiber, UplinkConnection).
 5. **Search** — free text, case-insensitive substring match on:

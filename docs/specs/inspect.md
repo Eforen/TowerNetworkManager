@@ -27,7 +27,7 @@ Each endpoint argument can be any of:
 
 - A node id (e.g. `@f1/c/1`, `db01`, `organic-goat`, `netplix.example`).
 - A `customer`, `player`, or `domain`: resolves to their owning/hosting network endpoint:
-  - `customer` / `player` -> their `UserPort` (via `Owner`).
+  - `customer` / `player` -> their `userport` (via `Owner`).
   - `domain` -> the `server` that hosts the `program` which `Provides` the matching Usage Type; if ambiguous, prompt the user.
 - A `usagetype`: invalid by itself; must be paired with a consumer/producer anchor.
 

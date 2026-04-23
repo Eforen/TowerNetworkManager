@@ -42,6 +42,7 @@ export const NODE_VISUALS: Record<NodeType, NodeVisual> = {
   router:           { shape: 'hexagon',      radius: 10, family: 'physical' },
   switch:           { shape: 'diamond',      radius: 10, family: 'physical' },
   port:             { shape: 'circle',       radius: 4,  family: 'physical' },
+  userport:         { shape: 'circle',       radius: 4,  family: 'customer' },
   uplink:           { shape: 'circle',       radius: 5,  family: 'physical' },
   floor:            { shape: 'roundedRect',  radius: 16, family: 'floor' },
   rack:             { shape: 'roundedRect',  radius: 14, family: 'rack' },

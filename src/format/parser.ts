@@ -27,6 +27,7 @@ import {
   RELATION_META,
   RELATION_NAMES,
   isNetAddrType,
+  mergeDefaultTags,
   parseCompositeDevicePortId,
   relationsForPair,
   type NodeType,
@@ -214,6 +215,12 @@ function parseEntity(
   if (type === 'port') {
     return parsePortEntity(cur, graph, ctx);
   }
+  if (type === 'userport') {
+    return parseUserportEntity(cur, graph, ctx);
+  }
+  if (type === 'uplink') {
+    return parseUplinkEntity(cur, graph, ctx);
+  }
 
   cur.skipSpaces();
   const id = readIdentity(cur, type);
@@ -234,16 +241,7 @@ function parseEntity(
 }
 
 /**
- * Port declaration: `port <N>[-<M>] <MEDIA> [#Tag ...] [key=value ...]`.
- *
- * Stored ids:
- *   - Device ports (no `#UserPort` tag): `port<N>` (e.g. id `port0`).
- *   - UserPorts (`#UserPort` tag present): bare digits (hardware address).
- *
- * The `<N>-<M>` range syntax expands inclusively into individual nodes.
- * The media keyword is positional and accepts the aliases:
- *   RJ45 | RJ  -> tag `RJ45`
- *   FiberOptic | FIBER | F -> tag `FiberOptic`
+ * Positional media keywords (aliases) for `port` / `userport` / `uplink` lines.
  */
 const PORT_MEDIA_ALIASES: Record<string, 'RJ45' | 'FiberOptic'> = {
   rj45: 'RJ45',
@@ -253,6 +251,116 @@ const PORT_MEDIA_ALIASES: Record<string, 'RJ45' | 'FiberOptic'> = {
   f: 'FiberOptic',
 };
 
+/**
+ * Customer endpoint: `userport <hardware> <MEDIA> [#Tag …] [k=v …]`.
+ */
+function parseUserportEntity(
+  cur: Cursor,
+  graph: Graph,
+  _ctx: ParseContext,
+): { type: NodeType; id: string } {
+  cur.skipSpaces();
+  let id: string;
+  if (cur.peek() === '"') {
+    id = cur.readQuoted();
+    if (!HARDWARE_ADDR_RE.test(id)) {
+      throw new ParseError(
+        'userport id in quotes must be 1..5 digit hardware address',
+        cur.startLoc(),
+      );
+    }
+  } else {
+    const d = cur.readDigits();
+    if (d === undefined) {
+      throw new ParseError(
+        "expected userport hardware id (1..5 digits), e.g. `userport 52682 RJ45`",
+        cur.loc(),
+      );
+    }
+    id = d;
+    if (cur.peek() === '-') {
+      throw new ParseError(
+        'userport hardware addresses do not support ranges',
+        cur.startLoc(),
+      );
+    }
+  }
+  cur.skipSpaces();
+  const mediaWord = cur.readAlnumWord();
+  if (!mediaWord) {
+    throw new ParseError(
+      'expected userport media (RJ45|RJ|FiberOptic|FIBER|F)',
+      cur.loc(),
+    );
+  }
+  const mediaTag = PORT_MEDIA_ALIASES[mediaWord.toLowerCase()];
+  if (!mediaTag) {
+    throw new ParseError(
+      `unknown userport media '${mediaWord}' (use RJ45|RJ|FiberOptic|FIBER|F)`,
+      cur.startLoc(),
+    );
+  }
+  const { tags, properties } = readTagsAndProps(cur);
+  const extra = tags.includes(mediaTag) ? tags : [mediaTag, ...tags];
+  graph.addNode({
+    type: 'userport',
+    id,
+    tags: mergeDefaultTags('userport', extra),
+    properties: { ...properties },
+  });
+  return { type: 'userport', id };
+}
+
+/**
+ * Building uplink: `uplink <id> <MEDIA> [#Tag …] [k=v …]` (id: 4 letters).
+ */
+function parseUplinkEntity(
+  cur: Cursor,
+  graph: Graph,
+  _ctx: ParseContext,
+): { type: NodeType; id: string } {
+  cur.skipSpaces();
+  const idRaw = cur.readWord();
+  if (idRaw === undefined) {
+    throw new ParseError('expected an uplink id (4 letters)', cur.loc());
+  }
+  if (!UPLINK_ID_RE.test(idRaw)) {
+    throw new ParseError(
+      `invalid uplink id '${idRaw}' (expected 4 letters, e.g. mtvw)`,
+      cur.startLoc(),
+    );
+  }
+  const id = idRaw.toLowerCase();
+  cur.skipSpaces();
+  const mediaWord = cur.readAlnumWord();
+  if (!mediaWord) {
+    throw new ParseError(
+      'expected uplink media (RJ45|RJ|FiberOptic|FIBER|F)',
+      cur.loc(),
+    );
+  }
+  const mediaTag = PORT_MEDIA_ALIASES[mediaWord.toLowerCase()];
+  if (!mediaTag) {
+    throw new ParseError(
+      `unknown uplink media '${mediaWord}' (use RJ45|RJ|FiberOptic|FIBER|F)`,
+      cur.startLoc(),
+    );
+  }
+  const { tags, properties } = readTagsAndProps(cur);
+  const extra = tags.includes(mediaTag) ? tags : [mediaTag, ...tags];
+  graph.addNode({
+    type: 'uplink',
+    id,
+    tags: mergeDefaultTags('uplink', extra),
+    properties: { ...properties },
+  });
+  return { type: 'uplink', id };
+}
+
+/**
+ * Device NIC port line: `port "parent/port0" <MEDIA> …`.
+ * Legacy `port <digits> <MEDIA> #UserPort` is accepted and stored as `userport`.
+ */
 function parsePortEntity(
   cur: Cursor,
   graph: Graph,
@@ -278,17 +386,25 @@ function parsePortEntity(
     }
     const { tags, properties } = readTagsAndProps(cur);
     const allTags = tags.includes(mediaTag) ? tags : [mediaTag, ...tags];
-    const isUserPort = allTags.includes('UserPort');
-    if (isUserPort) {
+    if (allTags.includes('UserPort')) {
       if (!HARDWARE_ADDR_RE.test(id)) {
         throw new ParseError(
-          'UserPort id in quotes must be 1..5 digit hardware',
+          'legacy #UserPort on port line: id must be 1..5 digit hardware address (prefer `userport`)',
           cur.startLoc(),
         );
       }
-    } else if (!parseCompositeDevicePortId(id)) {
+      const sans = allTags.filter((t) => t !== 'UserPort');
+      graph.addNode({
+        type: 'userport',
+        id,
+        tags: mergeDefaultTags('userport', sans),
+        properties: { ...properties },
+      });
+      return { type: 'userport', id };
+    }
+    if (!parseCompositeDevicePortId(id)) {
       throw new ParseError(
-        'non-UserPort port id in quotes must be parentId/portN',
+        'device port id in quotes must be parentId/portN',
         cur.startLoc(),
       );
     }
@@ -303,7 +419,7 @@ function parsePortEntity(
   const firstDigits = cur.readDigits();
   if (firstDigits === undefined) {
     throw new ParseError(
-      "expected a port number (e.g. 'port 0 RJ45')",
+      "expected quoted composite port id or digits with #UserPort (prefer `userport` for hardware addresses)",
       cur.loc(),
     );
   }
@@ -345,27 +461,27 @@ function parsePortEntity(
 
   const { tags, properties } = readTagsAndProps(cur);
   const allTags = tags.includes(mediaTag) ? tags : [mediaTag, ...tags];
-  const isUserPort = allTags.includes('UserPort');
-  if (!isUserPort) {
-    throw new ParseError(
-      'use portLayout on server, switch, or router for built-in ports (e.g. `server db01 RJ45[2] FIBER`); the `port` line is for #UserPort consumer hardware only',
-      cur.startLoc(),
-    );
+  if (allTags.includes('UserPort')) {
+    if (start !== end) {
+      throw new ParseError(
+        'UserPort range is not supported (use one `userport` line per hardware address)',
+        cur.startLoc(),
+      );
+    }
+    const id = String(start);
+    const sans = allTags.filter((t) => t !== 'UserPort');
+    graph.addNode({
+      type: 'userport',
+      id,
+      tags: mergeDefaultTags('userport', sans),
+      properties: { ...properties },
+    });
+    return { type: 'userport', id };
   }
-  if (isUserPort && start !== end) {
-    throw new ParseError(
-      'UserPort range is not supported (hardware addresses are unique per customer)',
-      cur.startLoc(),
-    );
-  }
-  const id = String(start);
-  graph.addNode({
-    type: 'port',
-    id,
-    tags: allTags.slice(),
-    properties: { ...properties },
-  });
-  return { type: 'port', id };
+  throw new ParseError(
+    'numeric `port …` without #UserPort is invalid (device ports come from portLayout). For customer gear use `userport <id> <MEDIA>`',
+    cur.startLoc(),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -805,7 +921,20 @@ function readIdentity(cur: Cursor, type: NodeType): string {
     if (!id) throw new ParseError('expected a domain name', cur.loc());
     return id;
   }
-  // `port` ids: UserPort 1..5 digit hardware, or `parentId/port0` (device).
+  if (type === 'userport') {
+    const w1 = cur.readWord();
+    if (w1 === undefined) {
+      throw new ParseError('expected a userport hardware id', cur.loc());
+    }
+    if (!HARDWARE_ADDR_RE.test(w1)) {
+      throw new ParseError(
+        'userport hardware id must be 1..5 decimal digits',
+        cur.startLoc(),
+      );
+    }
+    return w1;
+  }
+  // `port` ids: `parentId/port0` (device NIC).
   if (type === 'port') {
     const w1 = cur.readWord();
     if (w1 === undefined) {
@@ -829,9 +958,8 @@ function readIdentity(cur: Cursor, type: NodeType): string {
       }
       return id;
     }
-    if (HARDWARE_ADDR_RE.test(w1)) return w1;
     throw new ParseError(
-      "expected UserPort hardware id (1..5 digits) or parentId/portN (e.g. sw1/port0)",
+      "expected device port id parentId/portN (e.g. sw1/port0); use type userport for hardware addresses",
       cur.startLoc(),
     );
   }
@@ -842,11 +970,11 @@ function readIdentity(cur: Cursor, type: NodeType): string {
     }
     if (!UPLINK_ID_RE.test(id)) {
       throw new ParseError(
-        `invalid uplink id '${id}' (expected exactly 4 lowercase letters)`,
+        `invalid uplink id '${id}' (expected 4 letters, e.g. mtvw)`,
         cur.startLoc(),
       );
     }
-    return id;
+    return id.toLowerCase();
   }
   const id = cur.readWord();
   if (id === undefined) {

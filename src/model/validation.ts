@@ -157,8 +157,8 @@ function validateNode(
     }
   }
 
-  // Media tag sanity: port + uplink must carry exactly one of RJ45/FiberOptic.
-  if (node.type === 'port' || node.type === 'uplink') {
+  // Media tag sanity: port + userport + uplink must carry exactly one of RJ45/FiberOptic.
+  if (node.type === 'port' || node.type === 'userport' || node.type === 'uplink') {
     const rj = node.tags.includes('RJ45');
     const fo = node.tags.includes('FiberOptic');
     if (!rj && !fo) {
@@ -178,18 +178,19 @@ function validateNode(
     }
   }
 
+  if (node.type === 'userport') {
+    if (!HARDWARE_ADDR_RE.test(node.id)) {
+      errors.push({
+        severity: 'error',
+        code: 'userport.badId',
+        message: `userport[${node.id}] id must be a 1..5 digit hardware address`,
+        nodeKey: key,
+      });
+    }
+  }
+
   if (node.type === 'port') {
-    const isUser = node.tags.includes('UserPort');
-    if (isUser) {
-      if (!HARDWARE_ADDR_RE.test(node.id)) {
-        errors.push({
-          severity: 'error',
-          code: 'port.userIdNotHardware',
-          message: `UserPort port[${node.id}] id must be a 1..5 digit hardware address`,
-          nodeKey: key,
-        });
-      }
-    } else {
+    {
       const c = parseCompositeDevicePortId(node.id);
       if (!c) {
         errors.push({
@@ -313,11 +314,11 @@ function validateEdge(
           edgeId: edge.id,
         });
       }
-      if (to.tags.includes('UserPort')) {
+      if (to.type === 'userport') {
         errors.push({
           severity: 'error',
           code: 'nic.targetIsUserPort',
-          message: `NIC target ${to.type}[${to.id}] is a UserPort; NIC connects device-side ports only`,
+          message: `NIC target ${to.type}[${to.id}] is a userport; NIC connects device-side ports only`,
           edgeId: edge.id,
         });
       }
@@ -403,23 +404,8 @@ function validateEdge(
         });
       }
       break;
-    case 'Owner': {
-      // Owner to a port: the port must carry the UserPort tag
-      // (customer/player can only own user-facing ports).
-      if (
-        (from.type === 'customer' || from.type === 'player') &&
-        to.type === 'port' &&
-        !to.tags.includes('UserPort')
-      ) {
-        errors.push({
-          severity: 'error',
-          code: 'owner.portNotUserPort',
-          message: `Owner ${from.type}->port requires UserPort tag on port[${to.id}]`,
-          edgeId: edge.id,
-        });
-      }
+    case 'Owner':
       break;
-    }
     case 'Consumes':
     case 'Provides':
       validateConsumesProvides(graph, edge, from, errors);
@@ -529,36 +515,40 @@ function validateNetAddressUniqueness(
 
 /**
  * Warn on ports that are "dangling":
- *   - non-UserPort devices ports without a `NIC` edge from any device, and
- *   - UserPorts without any `NetworkCableLink*` edge (customer has no patch).
+ *   - device ports without a `NIC` edge from any device, and
+ *   - userports without any `NetworkCableLink*` edge (customer has no patch).
  */
 function validatePortConnectivity(
   graph: Graph,
   warnings: ValidationIssue[],
 ): void {
   for (const [key, node] of graph.nodes) {
+    if (node.type === 'userport') {
+      let hasCable = false;
+      for (const edge of graph.edgesOf(node.type, node.id)) {
+        if (
+          edge.relation === 'NetworkCableLinkRJ45' ||
+          edge.relation === 'NetworkCableLinkFiber'
+        ) {
+          hasCable = true;
+        }
+      }
+      if (!hasCable) {
+        warnings.push({
+          severity: 'warning',
+          code: 'userport.uncabled',
+          message: `userport[${node.id}] has no NetworkCableLink* edge`,
+          nodeKey: key,
+        });
+      }
+      continue;
+    }
     if (node.type !== 'port') continue;
-    const isUser = node.tags.includes('UserPort');
     let hasNic = false;
-    let hasCable = false;
     for (const edge of graph.edgesOf(node.type, node.id)) {
       if (edge.relation === 'NIC' && edge.toKey === key) hasNic = true;
-      if (
-        edge.relation === 'NetworkCableLinkRJ45' ||
-        edge.relation === 'NetworkCableLinkFiber'
-      ) {
-        hasCable = true;
-      }
     }
-    if (isUser && !hasCable) {
-      warnings.push({
-        severity: 'warning',
-        code: 'port.userUncabled',
-        message: `UserPort port[${node.id}] has no NetworkCableLink* edge`,
-        nodeKey: key,
-      });
-    }
-    if (!isUser && !hasNic && !isDeviceLayoutManagedPort(graph, node)) {
+    if (!hasNic && !isDeviceLayoutManagedPort(graph, node)) {
       warnings.push({
         severity: 'warning',
         code: 'port.deviceNoNic',

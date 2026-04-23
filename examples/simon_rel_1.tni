@@ -1,0 +1,56 @@
+!tni v1
+floor f0
+floor f1
+floor f2
+switch 8686 RJ45[5]
+# Infrastructure
+## Floor 0
+router 39915 RJ45[5] FIBER[5]
+###### Port4 is my debugger
+###### Port5 is default route
+###### Port6 is f1
+###### Port7 is f2
+server 55153 FIBER[3]
+## Floor 1
+## Floor 2
+uplink MTVW FIBER
+uplink HAAJ RJ45
+router 86110 FIBER[2] RJ45[2]
+=> networkaddress @f2/r/1
+-> floor[f2] :FloorAssignment
+port[66110/port0] -> uplink[HAAJ] :NetworkCableLinkFiber
+
+# Customers
+## Floor 1
+
+customer gripping-chipmunk
+=> userport 38118 RJ45
+--> port[66110/port2] :NetworkCableLinkRJ45
+=> networkaddress @f1/c/1
+-> floor[f1] :FloorAssignment
+customer free-hyena
+=> userport 27146 RJ45
+--> port[66110/port3] :NetworkCableLinkRJ45
+=> networkaddress @f1/c/2
+-> floor[f1] :FloorAssignment
+customer fast-dragonfly
+=> userport 64655 RJ45
+--> port[66110/port4] :NetworkCableLinkRJ45
+=> networkaddress @f1/c/3
+-> floor[f1] :FloorAssignment
+
+## Floor 2
+customer same-millipede
+=> userport 37295 RJ45
+=> networkaddress @f2/p/1
+-> floor[f2] :FloorAssignment
+
+customer sparkling-stingray
+=> userport 8566 RJ45
+=> networkaddress @f2/c/1
+-> floor[f2] :FloorAssignment
+
+customer muddy-chihuahua
+=> userport 86909 RJ45
+=> networkaddress @f2/c/2
+-> floor[f2] :FloorAssignment

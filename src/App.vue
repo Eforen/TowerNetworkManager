@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { storeToRefs } from 'pinia';
 import { computed, onMounted, onBeforeUnmount, ref } from 'vue';
 import { Graph } from '@/model';
 import {
@@ -20,6 +21,7 @@ import { GraphView } from '@/view';
 
 const graphStore = useGraphStore();
 const projectStore = useProjectStore();
+const { manualSourceMode, manualSourceText } = storeToRefs(projectStore);
 const fsmStore = useFsmStore();
 const selection = useSelectionStore();
 
@@ -39,7 +41,9 @@ const lastError = ref<string | null>(null);
 const importField = ref('');
 const drawerOpen = ref(false);
 
-const canonicalText = computed(() => graphStore.serializeText());
+const canonicalText = computed(() =>
+  manualSourceMode.value ? '' : graphStore.serializeText(),
+);
 
 function flash(msg: string): void {
   lastMessage.value = msg;
@@ -69,9 +73,9 @@ function seedDemoGraph(): void {
   g.addNode({ type: 'server', id: 'db01' });
   g.addNode({ type: 'port', id: 'port0', tags: ['RJ45'] });
   g.addNode({
-    type: 'port',
+    type: 'userport',
     id: '12345',
-    tags: ['RJ45', 'UserPort'],
+    tags: ['RJ45'],
   });
   g.addNode({ type: 'customer', id: 'organic-goat' });
   g.addNode({ type: 'networkaddress', id: '@f1/c/1' });
@@ -83,9 +87,9 @@ function seedDemoGraph(): void {
   g.addEdge({
     relation: 'NetworkCableLinkRJ45',
     from: { type: 'port', id: 'port0' },
-    to: { type: 'port', id: '12345' },
+    to: { type: 'userport', id: '12345' },
   });
-  g.addEdge({ relation: 'Owner', from: { type: 'customer', id: 'organic-goat' }, to: { type: 'port', id: '12345' } });
+  g.addEdge({ relation: 'Owner', from: { type: 'customer', id: 'organic-goat' }, to: { type: 'userport', id: '12345' } });
   g.addEdge({ relation: 'AssignedTo', from: { type: 'networkaddress', id: '@f1/c/1' }, to: { type: 'customer', id: 'organic-goat' } });
   g.addEdge({ relation: 'AssignedTo', from: { type: 'networkaddress', id: '@f1/s/1' }, to: { type: 'server', id: 'db01' } });
   graphStore.graph = g;
@@ -107,9 +111,33 @@ function onSave(): void {
 function onLoad(): void {
   run(`load ${slugInput.value}`, () => {
     fsmStore.dispatch({ type: 'loadStart' });
-    try { projectStore.load(slugInput.value); }
-    finally { fsmStore.dispatch({ type: 'loadDone' }); }
+    try {
+      projectStore.load(slugInput.value);
+    } finally {
+      fsmStore.dispatch({ type: 'loadDone' });
+    }
   });
+}
+
+function onLoadRaw(): void {
+  try {
+    fsmStore.dispatch({ type: 'loadStart' });
+    projectStore.loadRaw(slugInput.value);
+    drawerOpen.value = true;
+    flash(`load raw ${slugInput.value}`);
+  } catch (err) {
+    fail(err);
+  } finally {
+    fsmStore.dispatch({ type: 'loadDone' });
+  }
+}
+
+function onApplySource(): void {
+  run('apply source', () => projectStore.applyManualSource());
+}
+
+function onCancelSource(): void {
+  run('cancel source', () => projectStore.cancelManualSource());
 }
 function onRemove(): void {
   run(`rm ${slugInput.value}`, () => projectStore.removeProject(slugInput.value));
@@ -155,7 +183,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="tni-app">
     <header class="tni-topbar">
-      <span class="tni-brand">Tower Networking Inc</span>
+      <span class="tni-brand">Tower Networking Manager</span>
       <span class="tni-status">
         <span>{{ graphStore.stats.nodes }}N / {{ graphStore.stats.edges }}E</span>
         <span v-if="projectStore.active">· {{ projectStore.active }}</span>
@@ -181,20 +209,38 @@ onBeforeUnmount(() => {
           <button @click="onNew">new</button>
           <button @click="onSave">save</button>
           <button @click="onLoad">load</button>
+          <button type="button" title="Read storage without parsing (fix old syntax here)" @click="onLoadRaw">load raw</button>
           <button class="tni-danger" @click="onRemove">rm</button>
         </div>
         <div class="tni-row">
           <button @click="onExport">export</button>
           <button @click="seedDemoGraph">seed demo</button>
         </div>
-        <p v-if="lastError" class="tni-msg tni-err">x {{ lastError }}</p>
+        <p v-if="lastError" class="tni-msg tni-err">
+          x {{ lastError }}
+          <button type="button" class="tni-inline-btn" @click="onLoadRaw">Load raw (skip parse)</button>
+        </p>
         <p v-else-if="lastMessage" class="tni-msg tni-ok">ok {{ lastMessage }}</p>
         <details>
           <summary>Import text</summary>
           <textarea v-model="importField" rows="6" placeholder="!tni v1&#10;floor f1"></textarea>
           <button @click="onImport">import</button>
         </details>
-        <details open>
+        <section v-if="manualSourceMode" class="tni-manual-panel">
+          <h3>Manual source edit</h3>
+          <p class="tni-hint">
+            Graph is empty until text parses. Migrate old <code>port … RJ45</code> device lines to
+            <code>server/switch/router</code> <code>portLayout</code> (or mark consumer ports
+            <code>userport …</code>). Then apply or save.
+          </p>
+          <textarea v-model="manualSourceText" class="tni-code tni-manual-ta" rows="18" spellcheck="false"></textarea>
+          <div class="tni-row">
+            <button type="button" @click="onApplySource">Apply parse to graph</button>
+            <button type="button" @click="onSave">Save raw (storage)</button>
+            <button type="button" @click="onCancelSource">Cancel manual</button>
+          </div>
+        </section>
+        <details v-else open>
           <summary>Canonical text ({{ canonicalText.length }} B)</summary>
           <pre class="tni-code">{{ canonicalText }}</pre>
         </details>
@@ -367,6 +413,21 @@ textarea {
   margin: 0.5rem 0 0;
   color: var(--tni-fg-muted);
   font-size: 0.8rem;
+}
+.tni-inline-btn {
+  margin-left: 0.5rem;
+  vertical-align: baseline;
+}
+.tni-manual-panel {
+  margin: 0 0 0.75rem;
+}
+.tni-manual-panel h3 {
+  margin: 0 0 0.35rem;
+  font-size: 0.95rem;
+}
+.tni-manual-ta {
+  max-height: 70vh;
+  min-height: 8rem;
 }
 kbd {
   background: var(--tni-bg);

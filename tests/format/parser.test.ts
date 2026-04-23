@@ -31,13 +31,13 @@ describe('format/parser – entities', () => {
 
   it('parses tags and properties on an entity', () => {
     const { graph } = parse(
-      '!tni v1\nport 12345 RJ45 #UserPort deviceAddress=12345\n',
+      '!tni v1\nuserport 12345 RJ45 #UserPort deviceAddress=12345\n',
     );
-    const port = graph.getNode('port', '12345');
-    expect(port?.tags).toEqual(
+    const up = graph.getNode('userport', '12345');
+    expect(up?.tags).toEqual(
       expect.arrayContaining(['RJ45', 'UserPort', 'Physical', 'NetworkPort']),
     );
-    expect(port?.properties.deviceAddress).toBe(12345);
+    expect(up?.properties.deviceAddress).toBe(12345);
   });
 
   it('accepts quoted string values with escapes', () => {
@@ -110,17 +110,17 @@ describe('format/parser – edges', () => {
   it('errors on ambiguous relations and requires an explicit :Relation', () => {
     const ambiguous = [
       '!tni v1',
-      'port 1 RJ45 #UserPort',
-      'port 2 RJ45 #UserPort',
-      'port[1] -> port[2]',
+      'userport 1 RJ45',
+      'userport 2 RJ45',
+      'userport[1] -> userport[2]',
     ].join('\n');
     expect(() => parse(ambiguous)).toThrow(ParseError);
 
     const explicit = [
       '!tni v1',
-      'port 1 RJ45 #UserPort',
-      'port 2 RJ45 #UserPort',
-      'port[1] -> port[2] :NetworkCableLinkFiber',
+      'userport 1 RJ45',
+      'userport 2 RJ45',
+      'userport[1] -> userport[2] :NetworkCableLinkFiber',
     ].join('\n');
     expect(() => parse(explicit)).not.toThrow();
   });
@@ -130,8 +130,8 @@ describe('format/parser – edges', () => {
       [
         '!tni v1',
         'customer alice',
-        'port 12345 RJ45 #UserPort',
-        'customer[alice] -> port[12345] :Owner',
+        'userport 12345 RJ45',
+        'customer[alice] -> userport[12345] :Owner',
         '',
         'program database',
         'server db01',
@@ -146,7 +146,7 @@ describe('format/parser – edges', () => {
 
   it('rejects unknown relations with a suggestion', () => {
     const text =
-      '!tni v1\ncustomer alice\nport 12345 RJ45 #UserPort\ncustomer[alice] -> port[12345] :Ownner\n';
+      '!tni v1\ncustomer alice\nuserport 12345 RJ45\ncustomer[alice] -> userport[12345] :Ownner\n';
     try {
       parse(text);
       throw new Error('expected ParseError');
@@ -168,9 +168,9 @@ describe('format/parser – edges', () => {
 
   it('honors line continuation with trailing backslash', () => {
     const { graph } = parse(
-      ['!tni v1', 'port 12345 RJ45 #UserPort \\', '  deviceAddress=1'].join('\n'),
+      ['!tni v1', 'userport 12345 RJ45 \\', '  deviceAddress=1'].join('\n'),
     );
-    const p = graph.getNode('port', '12345');
+    const p = graph.getNode('userport', '12345');
     expect(p?.properties.deviceAddress).toBe(1);
   });
 });
@@ -186,7 +186,7 @@ describe('format/parser – port syntax', () => {
     expect(p2?.tags).toEqual(expect.arrayContaining(['FiberOptic']));
   });
 
-  it('rejects a bare `port` line without #UserPort (use portLayout on device)', () => {
+  it('rejects a bare numeric `port` line (device ports use portLayout)', () => {
     expect(() => parse('!tni v1\nport 0 RJ45\n')).toThrow(ParseError);
   });
 
@@ -200,16 +200,14 @@ describe('format/parser – port syntax', () => {
     );
   });
 
-  it('stores UserPort ids as bare hardware digits', () => {
-    const { graph } = parse('!tni v1\nport 52682 RJ45 #UserPort\n');
-    expect(graph.getNode('port', '52682')).toBeDefined();
-    expect(graph.getNode('port', 'port52682')).toBeUndefined();
+  it('stores userport ids as bare hardware digits', () => {
+    const { graph } = parse('!tni v1\nuserport 52682 RJ45\n');
+    expect(graph.getNode('userport', '52682')).toBeDefined();
+    expect(graph.getNode('port', '52682')).toBeUndefined();
   });
 
-  it('rejects range syntax on UserPort lines', () => {
-    expect(() => parse('!tni v1\nport 0-2 RJ45 #UserPort\n')).toThrow(
-      ParseError,
-    );
+  it('rejects range syntax on userport lines', () => {
+    expect(() => parse('!tni v1\nuserport 0-2 RJ45\n')).toThrow(ParseError);
   });
 
   it('rejects unknown media keywords', () => {
@@ -224,7 +222,7 @@ describe('format/parser – port syntax', () => {
     expect(() => parse('!tni v1\nport 0\n')).toThrow(ParseError);
   });
 
-  it('rejects an empty/inverted range on UserPort', () => {
+  it('rejects an empty/inverted range on legacy port #UserPort line', () => {
     expect(() => parse('!tni v1\nport 3-1 RJ45 #UserPort\n')).toThrow(
       ParseError,
     );
@@ -264,14 +262,14 @@ describe('format/parser – arrow-prefix continuation (`->` / `=>`)', () => {
       [
         '!tni v1',
         'customer organic-goat',
-        '=> port 52682 RJ45 #UserPort :Owner',
+        '=> userport 52682 RJ45 :Owner',
       ].join('\n'),
     );
-    expect(graph.getNode('port', '52682')).toBeDefined();
+    expect(graph.getNode('userport', '52682')).toBeDefined();
     const owner = edgesBy(graph, 'Owner');
     expect(owner.length).toBe(1);
     expect(from(owner[0])).toEqual({ type: 'customer', id: 'organic-goat' });
-    expect(to(owner[0])).toEqual({ type: 'port', id: '52682' });
+    expect(to(owner[0])).toEqual({ type: 'userport', id: '52682' });
   });
 
   it('auto-flips direction when relation requires the opposite order', () => {
@@ -297,7 +295,7 @@ describe('format/parser – arrow-prefix continuation (`->` / `=>`)', () => {
         '!tni v1',
         'customertype casual_dweller',
         'customer organic-goat',
-        '=> port 52682 RJ45 #UserPort :Owner',
+        '=> userport 52682 RJ45 :Owner',
         '=> networkaddress @f1/c/3 :AssignedTo',
         '-> customertype[casual_dweller] :Owner',
       ].join('\n'),
@@ -315,13 +313,13 @@ describe('format/parser – arrow-prefix continuation (`->` / `=>`)', () => {
         'customer organic-goat',
         '',
         '# still rooted on organic-goat',
-        '=> port 52682 RJ45 #UserPort :Owner',
+        '=> userport 52682 RJ45 :Owner',
       ].join('\n'),
     );
     const owner = edgesBy(graph, 'Owner');
     expect(owner.length).toBe(1);
     expect(from(owner[0]).id).toBe('organic-goat');
-    expect(to(owner[0])).toEqual({ type: 'port', id: '52682' });
+    expect(to(owner[0])).toEqual({ type: 'userport', id: '52682' });
   });
 
   it('full-form edge decls do NOT change the anchor', () => {
@@ -331,14 +329,14 @@ describe('format/parser – arrow-prefix continuation (`->` / `=>`)', () => {
         'customertype casual_dweller',
         'customer organic-goat',
         'customer[organic-goat] -> customertype[casual_dweller] :Owner',
-        '=> port 52682 RJ45 #UserPort :Owner',
+        '=> userport 52682 RJ45 :Owner',
       ].join('\n'),
     );
     const owner = edgesBy(graph, 'Owner');
     expect(owner.length).toBe(2);
     const tos = owner.map((e) => `${to(e).type}:${to(e).id}`);
     expect(tos).toEqual(
-      expect.arrayContaining(['customertype:casual_dweller', 'port:52682']),
+      expect.arrayContaining(['customertype:casual_dweller', 'userport:52682']),
     );
   });
 
@@ -395,7 +393,7 @@ describe('format/parser – arrow-prefix continuation (`->` / `=>`)', () => {
 
   it("errors when `=>` has no anchor", () => {
     expect(() =>
-      parse(['!tni v1', '=> port 0 RJ45 #UserPort'].join('\n')),
+      parse(['!tni v1', '=> userport 0 RJ45'].join('\n')),
     ).toThrow(/no anchor/);
   });
 
@@ -438,9 +436,9 @@ describe('format/parser – edge-ref selectors (`subj>Type[qual]`)', () => {
       [
         '!tni v1',
         'customer organic-goat',
-        '=> port 52682 RJ45 #UserPort :Owner',
+        '=> userport 52682 RJ45 :Owner',
         'server s1 RJ45[1]',
-        'customer[organic-goat]>port -> port[s1/port0] :NetworkCableLinkRJ45',
+        'customer[organic-goat]>userport -> port[s1/port0] :NetworkCableLinkRJ45',
       ].join('\n'),
     );
     const cables = edgesBy(graph, 'NetworkCableLinkRJ45');
@@ -454,16 +452,16 @@ describe('format/parser – edge-ref selectors (`subj>Type[qual]`)', () => {
       [
         '!tni v1',
         'customer organic-goat',
-        '=> port 11111 RJ45 #UserPort :Owner',
-        '=> port 22222 RJ45 #UserPort :Owner',
-        '=> port 33333 RJ45 #UserPort :Owner',
+        '=> userport 11111 RJ45 :Owner',
+        '=> userport 22222 RJ45 :Owner',
+        '=> userport 33333 RJ45 :Owner',
         'networkaddress @f1/c/1',
-        'networkaddress[@f1/c/1] -> customer[organic-goat]>port[1] :AssignedTo',
+        'networkaddress[@f1/c/1] -> customer[organic-goat]>userport[1] :AssignedTo',
       ].join('\n'),
     );
     const assigned = edgesBy(graph, 'AssignedTo');
     expect(assigned.length).toBe(1);
-    expect(to(assigned[0])).toEqual({ type: 'port', id: '22222' });
+    expect(to(assigned[0])).toEqual({ type: 'userport', id: '22222' });
   });
 
   it('resolves a literal id qualifier `[@addr]`', () => {
@@ -496,11 +494,11 @@ describe('format/parser – edge-ref selectors (`subj>Type[qual]`)', () => {
       [
         '!tni v1',
         'customer organic-goat',
-        '=> port 52682 RJ45 #UserPort :Owner',
-        '=> port 0 RJ45 #UserPort :Owner',
-        '=> port 9 RJ45 #UserPort :Owner',
+        '=> userport 52682 RJ45 :Owner',
+        '=> userport 0 RJ45 :Owner',
+        '=> userport 9 RJ45 :Owner',
         'server s1 RJ45[1]',
-        'customer[organic-goat]>port[#0] -> port[9] :NetworkCableLinkRJ45',
+        'customer[organic-goat]>userport[#0] -> userport[9] :NetworkCableLinkRJ45',
       ].join('\n'),
     );
     const cables = edgesBy(graph, 'NetworkCableLinkRJ45');
@@ -516,10 +514,10 @@ describe('format/parser – edge-ref selectors (`subj>Type[qual]`)', () => {
           '!tni v1',
           'customer organic-goat',
           'customertype casual_dweller',
-          'customer[organic-goat]>port -> customertype[casual_dweller] :Owner',
+          'customer[organic-goat]>userport -> customertype[casual_dweller] :Owner',
         ].join('\n'),
       ),
-    ).toThrow(/no port reachable/);
+    ).toThrow(/no userport reachable/);
   });
 
   it('errors on out-of-range index', () => {
@@ -528,9 +526,9 @@ describe('format/parser – edge-ref selectors (`subj>Type[qual]`)', () => {
         [
           '!tni v1',
           'customer organic-goat',
-          '=> port 52682 RJ45 #UserPort :Owner',
+          '=> userport 52682 RJ45 :Owner',
           'customertype casual_dweller',
-          'customer[organic-goat]>port[3] -> customertype[casual_dweller] :Owner',
+          'customer[organic-goat]>userport[3] -> customertype[casual_dweller] :Owner',
         ].join('\n'),
       ),
     ).toThrow(/out of range/);
@@ -544,9 +542,9 @@ describe('format/parser – edge-ref selectors (`subj>Type[qual]`)', () => {
         [
           '!tni v1',
           'customer organic-goat',
-          '=> port 52682 RJ45 #UserPort :Owner',
+          '=> userport 52682 RJ45 :Owner',
           'server s1 RJ45[1]',
-          'customer[organic-goat]>port[#99999] -> port[s1/port0] :NetworkCableLinkRJ45',
+          'customer[organic-goat]>userport[#99999] -> port[s1/port0] :NetworkCableLinkRJ45',
         ].join('\n'),
       ),
     ).toThrow(/not found/);
@@ -557,19 +555,18 @@ describe('format/parser – edge-ref selectors (`subj>Type[qual]`)', () => {
       [
         '!tni v1',
         'customer organic-goat',
-        '=> port 52682 RJ45 #UserPort :Owner',
+        '=> userport 52682 RJ45 :Owner',
         'server s1 RJ45[1]',
-        'port[s1/port0] -> port[52682] :NetworkCableLinkRJ45',
-        'switch sw1',
-        'switch[sw1] -> customer[organic-goat]>port :NIC',
+        'port[s1/port0] -> userport[52682] :NetworkCableLinkRJ45',
+        'switch sw1 RJ45[1]',
+        'switch[sw1] -> port[s1/port0] :NIC',
       ].join('\n'),
     );
     const nic = edgesBy(graph, 'NIC');
-    // sw1’s layout pre-adds one NIC; the arrow adds switch → user port 52682.
-    const toUser = nic.find((e) => to(e).id === '52682');
-    expect(toUser).toBeDefined();
-    expect(from(toUser!)).toEqual({ type: 'switch', id: 'sw1' });
-    expect(to(toUser!)).toEqual({ type: 'port', id: '52682' });
+    const toDev = nic.find(
+      (e) => from(e).id === 'sw1' && to(e).id === 's1/port0',
+    );
+    expect(toDev).toBeDefined();
   });
 
   it('selectors work on the RHS of `->` arrow lines too', () => {
@@ -577,18 +574,16 @@ describe('format/parser – edge-ref selectors (`subj>Type[qual]`)', () => {
       [
         '!tni v1',
         'customer organic-goat',
-        '=> port 52682 RJ45 #UserPort :Owner',
+        '=> userport 52682 RJ45 :Owner',
         'switch sw1 RJ45[1]',
-        '-> customer[organic-goat]>port :NIC',
+        '-> port[sw1/port0] :NIC',
       ].join('\n'),
     );
     const nic = edgesBy(graph, 'NIC');
-    const toUser = nic.find(
-      (e) => to(e).id === '52682' && from(e).id === 'sw1',
+    const toDev = nic.find(
+      (e) => to(e).id === 'sw1/port0' && from(e).id === 'sw1',
     );
-    expect(toUser).toBeDefined();
-    expect(from(toUser!)).toEqual({ type: 'switch', id: 'sw1' });
-    expect(to(toUser!)).toEqual({ type: 'port', id: '52682' });
+    expect(toDev).toBeDefined();
   });
 });
 
