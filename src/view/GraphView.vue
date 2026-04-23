@@ -28,7 +28,7 @@ import {
 import { drag, type D3DragEvent } from 'd3-drag';
 import { select } from 'd3-selection';
 import { zoom, zoomIdentity, type D3ZoomEvent, type ZoomBehavior } from 'd3-zoom';
-import type { Edge, Node as ModelNode, NodeKey } from '@/model';
+import type { Edge, EdgeId, Node as ModelNode, NodeKey } from '@/model';
 import {
   useFsmStore,
   useGraphStore,
@@ -66,6 +66,7 @@ const simLinks = shallowRef<SimLink[]>([]);
 const tickRev = ref(0);
 
 const hoverKey = ref<NodeKey | null>(null);
+const hoverEdgeId = ref<EdgeId | null>(null);
 const hoverNeighbors = ref<Set<NodeKey>>(new Set());
 const tooltipPos = ref({ x: 0, y: 0 });
 const tooltipVisible = ref(false);
@@ -198,6 +199,7 @@ watch([simNodes, () => rootRef.value], async () => {
 // ---------------------------------------------------------------------
 
 function onNodeEnter(key: NodeKey, ev: MouseEvent): void {
+  hoverEdgeId.value = null;
   hoverKey.value = key;
   selection.setHover(key);
   hoverNeighbors.value = computeNeighbors(key);
@@ -213,6 +215,26 @@ function onNodeLeave(): void {
   hoverKey.value = null;
   selection.setHover(null);
   hoverNeighbors.value = new Set();
+  tooltipVisible.value = false;
+}
+
+function onEdgeEnter(l: SimLink, ev: MouseEvent): void {
+  // Node hover wins if already active (mouse jumped from node to edge
+  // under a crowded layout); clear it so the edge owns the tooltip now.
+  hoverKey.value = null;
+  selection.setHover(null);
+  hoverNeighbors.value = new Set();
+  hoverEdgeId.value = l.model.id;
+  tooltipVisible.value = true;
+  positionTooltip(ev);
+}
+
+function onEdgeMove(ev: MouseEvent): void {
+  if (tooltipVisible.value) positionTooltip(ev);
+}
+
+function onEdgeLeave(): void {
+  hoverEdgeId.value = null;
   tooltipVisible.value = false;
 }
 
@@ -244,6 +266,26 @@ const hoverNode = computed<ModelNode | null>(() => {
   const n = simNodes.value.find((s) => s.id === hoverKey.value);
   return n ? n.model : null;
 });
+
+const hoverEdge = computed<Edge | null>(() => {
+  if (!hoverEdgeId.value) return null;
+  const l = simLinks.value.find((x) => x.model.id === hoverEdgeId.value);
+  return l ? l.model : null;
+});
+
+function parseNodeKey(key: NodeKey): { type: string; id: string } {
+  const i = key.indexOf(':');
+  return { type: key.slice(0, i), id: key.slice(i + 1) };
+}
+
+function edgePropEntries(e: Edge): Array<[string, unknown]> {
+  const out: Array<[string, unknown]> = [];
+  for (const [k, v] of Object.entries(e.properties)) {
+    if (v === undefined || v === null || v === '') continue;
+    out.push([k, v]);
+  }
+  return out;
+}
 
 // ---------------------------------------------------------------------
 // Click / selection
@@ -462,9 +504,25 @@ defineExpose({ layout, simNodes, simLinks });
           <g
             v-for="l in simLinks"
             :key="l.id"
-            :class="{ dimmed: edgeDimmed(l) }"
+            :class="{
+              dimmed: edgeDimmed(l),
+              hover: hoverEdgeId === l.model.id,
+            }"
           >
+            <!-- Fat invisible stroke catches the pointer so hovering a
+                 thin edge is easy. Sits under the visible path. -->
             <path
+              class="tni-graph__edge-hit"
+              :d="linkPath(l)"
+              stroke="transparent"
+              stroke-width="14"
+              fill="none"
+              @mouseenter="onEdgeEnter(l, $event)"
+              @mousemove="onEdgeMove"
+              @mouseleave="onEdgeLeave"
+            />
+            <path
+              class="tni-graph__edge"
               :d="linkPath(l)"
               :stroke="edgeStrokeStyle(l.model)"
               :stroke-width="edgeWidth(l.model.relation, l.model.strength)"
@@ -537,6 +595,41 @@ defineExpose({ layout, simNodes, simLinks });
           neighbors: {{ hoverNeighbors.size }}
         </div>
       </template>
+      <template v-else-if="hoverEdge">
+        <div class="tni-tip__head">
+          <span class="tni-tip__type">{{ hoverEdge.relation }}</span>
+          <span class="tni-tip__sep">·</span>
+          <span class="tni-tip__id">{{ hoverEdge.directed ? 'directed' : 'undirected' }}</span>
+        </div>
+        <div class="tni-tip__edge-endpoints">
+          <span class="tni-tip__endpoint">
+            <span class="tni-tip__type">{{ parseNodeKey(hoverEdge.fromKey).type }}</span>
+            <span class="tni-tip__sep">[</span>
+            <span class="tni-tip__id">{{ parseNodeKey(hoverEdge.fromKey).id }}</span>
+            <span class="tni-tip__sep">]</span>
+          </span>
+          <span class="tni-tip__edge-arrow">{{ hoverEdge.directed ? '→' : '↔' }}</span>
+          <span class="tni-tip__endpoint">
+            <span class="tni-tip__type">{{ parseNodeKey(hoverEdge.toKey).type }}</span>
+            <span class="tni-tip__sep">[</span>
+            <span class="tni-tip__id">{{ parseNodeKey(hoverEdge.toKey).id }}</span>
+            <span class="tni-tip__sep">]</span>
+          </span>
+        </div>
+        <div
+          v-if="edgePropEntries(hoverEdge).length > 0"
+          class="tni-tip__tags"
+        >
+          <span
+            v-for="[k, v] in edgePropEntries(hoverEdge)"
+            :key="k"
+            class="tni-tip__tag"
+          >{{ k }}={{ v }}</span>
+        </div>
+        <div class="tni-tip__footer">
+          strength: {{ hoverEdge.strength.toFixed(2) }}
+        </div>
+      </template>
     </div>
     <div class="tni-graph__hud">
       <span>{{ simNodes.length }} nodes · {{ simLinks.length }} edges</span>
@@ -601,6 +694,23 @@ defineExpose({ layout, simNodes, simLinks });
 
 .tni-graph__edges g.dimmed {
   opacity: 0.2;
+}
+
+/* Invisible hit path: catches pointer events so hovering a thin edge is
+   reliable. The visible edge is painted on top. */
+.tni-graph__edge-hit {
+  cursor: pointer;
+  pointer-events: stroke;
+}
+
+.tni-graph__edge {
+  pointer-events: none;
+  transition: stroke-width 80ms ease;
+}
+
+.tni-graph__edges g.hover .tni-graph__edge {
+  stroke-width: 3px;
+  filter: drop-shadow(0 0 3px var(--tni-accent, #4a9eff));
 }
 
 .tni-graph__label {
@@ -685,6 +795,26 @@ defineExpose({ layout, simNodes, simLinks });
   margin-top: 0.35rem;
   color: var(--tni-fg-muted);
   font-size: 0.72rem;
+}
+
+.tni-tip__edge-endpoints {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem;
+  margin-top: 0.25rem;
+}
+
+.tni-tip__endpoint {
+  display: inline-flex;
+  align-items: baseline;
+  font-family: var(--tni-font-mono);
+  font-size: 0.75rem;
+}
+
+.tni-tip__edge-arrow {
+  color: var(--tni-fg-muted);
+  font-weight: 600;
 }
 
 .tni-graph__hud {
