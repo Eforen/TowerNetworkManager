@@ -71,17 +71,17 @@ describe('format/serializer – header and layout', () => {
 
   it('sorts undirected cable endpoints in lex order', () => {
     const g = new Graph();
-    g.addNode({ type: 'port', id: 'port0' });
-    g.addNode({ type: 'port', id: 'port1' });
+    g.addNode({ type: 'port', id: 'a/port0' });
+    g.addNode({ type: 'port', id: 'b/port0' });
     g.addEdge({
       relation: 'NetworkCableLinkRJ45',
-      from: { type: 'port', id: 'port1' },
-      to: { type: 'port', id: 'port0' },
+      from: { type: 'port', id: 'b/port0' },
+      to: { type: 'port', id: 'a/port0' },
     });
     const out = serialize(g);
     const line = out.split('\n').find((l) => l.includes(':NetworkCableLinkRJ45'));
     expect(line).toBeDefined();
-    expect(line!.indexOf('port0')).toBeLessThan(line!.indexOf('port1'));
+    expect(line!.indexOf('a')).toBeLessThan(line!.indexOf('b'));
   });
 });
 
@@ -108,12 +108,13 @@ describe('format/serializer – node formatting', () => {
     expect(line).toBe('port 12345 RJ45 #UserPort deviceAddress=12345');
   });
 
-  it('serializes a device port with the positional media keyword', () => {
+  it('serializes a composite (non–layout-only) port id with quotes', () => {
     const g = new Graph();
-    g.addNode({ type: 'port', id: 'port7', tags: ['FiberOptic'] });
+    g.addNode({ type: 'server', id: 's1' });
+    g.addNode({ type: 'port', id: 's1/port7', tags: ['FiberOptic'] });
     const out = serialize(g);
     const line = out.split('\n').find((l) => l.startsWith('port '));
-    expect(line).toBe('port 7 FiberOptic');
+    expect(line).toBe('port "s1/port7" FiberOptic');
   });
 
   it('quotes strings with spaces or special chars', () => {
@@ -140,6 +141,16 @@ describe('format/serializer – node formatting', () => {
 });
 
 describe('format/serializer – edge formatting', () => {
+  it('omits layout-implied NIC edges (re-synced on parse)', () => {
+    const { graph } = parse('!tni v1\nswitch 54321 RJ45[1]\n');
+    expect([...graph.edges.values()].some((e) => e.relation === 'NIC')).toBe(
+      true,
+    );
+    const out = serialize(graph);
+    expect(out).not.toMatch(/:NIC/);
+    expect(out).toContain('switch 54321');
+  });
+
   it('emits edge properties as {k=v, k=v} sorted by key', () => {
     const g = new Graph();
     g.addNode({ type: 'program', id: 'database' });

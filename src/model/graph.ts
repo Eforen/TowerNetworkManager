@@ -12,7 +12,12 @@
  * existence) and index consistency.
  */
 
-import { edgeId as buildEdgeId, isValidNodeId, nodeKey } from './ids';
+import {
+  edgeId as buildEdgeId,
+  isValidNodeId,
+  nodeKey,
+  parseCompositeDevicePortId,
+} from './ids';
 import {
   mergeDefaultProperties,
   mergeDefaultTags,
@@ -55,7 +60,14 @@ export interface EdgeInit {
 
 export interface NodePatch {
   tags?: readonly string[];
+  /**
+   * Merged on top of existing `properties` (shallow) after deletions. Use
+   * `propertyRemove` to clear keys; setting `undefined` in the merge is
+   * not a delete.
+   */
   properties?: Properties;
+  /** Remove these keys from `properties` (applied before `properties` merge). */
+  propertyRemove?: readonly string[];
 }
 
 export interface EdgePatch {
@@ -100,6 +112,15 @@ export class Graph {
   }
 
   removeNode(type: NodeType, id: NodeId): Node | undefined {
+    if (type === 'server' || type === 'switch' || type === 'router') {
+      const childPortIds: NodeId[] = [];
+      for (const [, n] of this.nodes) {
+        if (n.type !== 'port') continue;
+        const c = parseCompositeDevicePortId(n.id);
+        if (c && c.parentId === id) childPortIds.push(n.id);
+      }
+      for (const pid of childPortIds) this.removeNode('port', pid);
+    }
     const key = nodeKey(type, id);
     const node = this.nodes.get(key);
     if (!node) return undefined;
@@ -120,6 +141,11 @@ export class Graph {
     if (patch.tags) {
       node.tags = mergeDefaultTags(type, patch.tags);
       indexUpdateNodeTags(this.ix, node, oldTags);
+    }
+    if (patch.propertyRemove) {
+      for (const k of patch.propertyRemove) {
+        delete node.properties[k];
+      }
     }
     if (patch.properties) {
       node.properties = { ...node.properties, ...patch.properties };
@@ -158,6 +184,16 @@ export class Graph {
     }
     const id = buildEdgeId(init.relation, fromKey, toKey, meta.directed);
     if (this.edges.has(id)) {
+      const existing = this.edges.get(id)!;
+      // `syncEphemeralDevicePorts` pre-adds layout NICs; the same file often
+      // re-declares them. Treat duplicate identical NICs as idempotent; merge
+      // new non-empty `properties` on top of the existing edge.
+      if (init.relation === 'NIC' && existing.relation === 'NIC') {
+        if (Object.keys(init.properties ?? {}).length > 0) {
+          return this.updateEdge(id, { properties: init.properties! });
+        }
+        return existing;
+      }
       throw new GraphStructureError(`duplicate edge ${id}`);
     }
     const edge: Edge = {

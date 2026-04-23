@@ -5,7 +5,7 @@
     - SVG renderer (canvas fallback deferred until >2000 nodes).
     - d3-force simulation via `GraphLayout`.
     - Pan / zoom (d3-zoom) with scale range [0.1, 8].
-    - Node drag (d3-drag) with fx/fy pin while held.
+    - Node drag (pointer events + d3.pointer in viewport space) with fx/fy pin while held.
     - Hover tooltip, click -> FSM `clickNode`, shift-click adds to selection.
     - Keyboard: arrows pan, +/- zoom, f fit, g toggle floor layout.
     - Labels faded in above zoom 0.6.
@@ -25,8 +25,7 @@ import {
   shallowRef,
   watch,
 } from 'vue';
-import { drag, type D3DragEvent } from 'd3-drag';
-import { select } from 'd3-selection';
+import { pointer, select } from 'd3-selection';
 import { zoom, zoomIdentity, type D3ZoomEvent, type ZoomBehavior } from 'd3-zoom';
 import type { Edge, EdgeId, Node as ModelNode, NodeKey } from '@/model';
 import {
@@ -52,6 +51,8 @@ const selection = useSelectionStore();
 
 const rootRef = ref<HTMLDivElement | null>(null);
 const svgRef = ref<SVGSVGElement | null>(null);
+/** Pan/zoom layer; d3.pointer(..., el) must use this so coords match `n.x`/`n.y`. */
+const viewportRef = ref<SVGGElement | null>(null);
 const tooltipRef = ref<HTMLDivElement | null>(null);
 
 const layoutMode = ref<'force' | 'floor'>('force');
@@ -75,6 +76,9 @@ const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matc
 
 let zoomBehavior: ZoomBehavior<SVGSVGElement, unknown> | null = null;
 let lastFrame = 0;
+const suppressNodeClick = ref(false);
+/** Cancels window pointer listeners if the view unmounts mid-drag. */
+let cancelPointerDrag: (() => void) | null = null;
 
 // ---------------------------------------------------------------------
 // Simulation wiring
@@ -165,34 +169,83 @@ function onDoubleClickBackground(ev: MouseEvent): void {
 }
 
 // ---------------------------------------------------------------------
-// Node drag
+// Node drag (pointer + d3.pointer; avoids d3-drag vs Vue DOM churn)
 // ---------------------------------------------------------------------
 
-function initDrag(): void {
-  if (!svgRef.value) return;
-  const behavior = drag<SVGGElement, SimNode>()
-    .on('start', (event: D3DragEvent<SVGGElement, SimNode, SimNode>, d) => {
-      if (!event.active) layout.sim.alphaTarget(reducedMotion ? 0 : 0.3).restart();
-      d.fx = d.x ?? 0;
-      d.fy = d.y ?? 0;
-    })
-    .on('drag', (event, d) => {
-      d.fx = event.x;
-      d.fy = event.y;
-    })
-    .on('end', (event, d) => {
-      if (!event.active) layout.sim.alphaTarget(0);
-      d.fx = null;
-      d.fy = null;
-    });
-  select(svgRef.value).selectAll<SVGGElement, SimNode>('[data-sim-node]').call(behavior);
-}
+function onNodePointerDown(key: NodeKey, ev: PointerEvent): void {
+  if (ev.button !== 0) return;
+  const container = viewportRef.value;
+  const node = layout.nodes().find((n) => n.id === key);
+  if (!container || !node) return;
 
-// Re-attach drag after nodes mount/change.
-watch([simNodes, () => rootRef.value], async () => {
-  await nextTick();
-  initDrag();
-});
+  ev.stopPropagation();
+
+  cancelPointerDrag?.();
+  let movedDuringDrag = false;
+
+  if (!reducedMotion) layout.sim.alphaTarget(0.2).restart();
+
+  const [px0, py0] = pointer(ev, container);
+  const nx = node.x ?? 0;
+  const ny = node.y ?? 0;
+  const ox = px0 - nx;
+  const oy = py0 - ny;
+
+  function applyWorld(wx: number, wy: number): void {
+    const x = wx - ox;
+    const y = wy - oy;
+    node.fx = x;
+    node.fy = y;
+    node.x = x;
+    node.y = y;
+    tickRev.value++;
+  }
+
+  function move(e: PointerEvent): void {
+    if (e.pointerId !== ev.pointerId) return;
+    movedDuringDrag = true;
+    suppressNodeClick.value = true;
+    const [wx, wy] = pointer(e, container);
+    applyWorld(wx, wy);
+  }
+
+  function end(e: PointerEvent): void {
+    if (e.pointerId !== ev.pointerId) return;
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', end);
+    window.removeEventListener('pointercancel', end);
+    cancelPointerDrag = null;
+
+    layout.sim.alphaTarget(0);
+    node.fx = null;
+    node.fy = null;
+    tickRev.value++;
+
+    if (movedDuringDrag) {
+      queueMicrotask(() => {
+        suppressNodeClick.value = false;
+      });
+    } else {
+      suppressNodeClick.value = false;
+    }
+  }
+
+  cancelPointerDrag = () => {
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', end);
+    window.removeEventListener('pointercancel', end);
+    cancelPointerDrag = null;
+    layout.sim.alphaTarget(0);
+    node.fx = null;
+    node.fy = null;
+    tickRev.value++;
+    suppressNodeClick.value = false;
+  };
+
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', end);
+  window.addEventListener('pointercancel', end);
+}
 
 // ---------------------------------------------------------------------
 // Hover + tooltip
@@ -293,6 +346,7 @@ function edgePropEntries(e: Edge): Array<[string, unknown]> {
 
 function onNodeClick(key: NodeKey, ev: MouseEvent): void {
   ev.stopPropagation();
+  if (ev.defaultPrevented || suppressNodeClick.value) return;
   const model = simNodes.value.find((n) => n.id === key)?.model;
   if (!model) return;
   if (ev.shiftKey) {
@@ -344,11 +398,11 @@ onMounted(async () => {
   rebuild();
   await nextTick();
   initZoom();
-  initDrag();
   document.addEventListener('visibilitychange', onVisibility);
 });
 
 onBeforeUnmount(() => {
+  cancelPointerDrag?.();
   document.removeEventListener('visibilitychange', onVisibility);
   layout.destroy();
 });
@@ -499,7 +553,7 @@ defineExpose({ layout, simNodes, simLinks });
           <path d="M0,-4 L8,0 L0,4 z" :fill="`var(${EDGE_VISUALS[rel as keyof typeof EDGE_VISUALS].strokeVar})`" />
         </marker>
       </defs>
-      <g :transform="`translate(${tx} ${ty}) scale(${zoomLevel})`">
+      <g ref="viewportRef" :transform="`translate(${tx} ${ty}) scale(${zoomLevel})`">
         <g class="tni-graph__edges">
           <g
             v-for="l in simLinks"
@@ -545,6 +599,7 @@ defineExpose({ layout, simNodes, simLinks });
             v-for="n in simNodes"
             :key="n.id"
             data-sim-node
+            :data-sim-id="n.id"
             :transform="nodeTransform(n)"
             :class="{
               selected: selected(n.id),
@@ -552,6 +607,7 @@ defineExpose({ layout, simNodes, simLinks });
               hover: hoverKey === n.id,
               neighbor: hoverNeighbors.has(n.id),
             }"
+            @pointerdown="onNodePointerDown(n.id, $event)"
             @mouseenter="onNodeEnter(n.id, $event)"
             @mousemove="onNodeMove"
             @mouseleave="onNodeLeave"
@@ -676,6 +732,7 @@ defineExpose({ layout, simNodes, simLinks });
 
 .tni-graph__nodes g {
   cursor: pointer;
+  touch-action: none;
 }
 
 .tni-graph__nodes g.hover .tni-graph__node-shape {

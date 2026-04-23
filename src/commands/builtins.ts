@@ -7,23 +7,32 @@
  */
 
 import {
+  expandPortLayoutToMediaList,
   isNodeType,
   RELATION_META,
   RELATION_NAMES,
   relationsForPair,
+  type NodePatch,
   type NodeType,
   type RelationName,
 } from '@/model';
 import type { CommandDef, CommandResult } from './types';
 import type { CommandRegistry } from './registry';
 
+const DEVICE_PORT_LAYOUT: ReadonlySet<string> = new Set([
+  'server',
+  'switch',
+  'router',
+]);
+
 const addNode: CommandDef = {
   name: 'add node',
-  summary: 'Create a node of the given type',
+  summary:
+    'Create a node. For server|switch|router, optional `portLayout` after id: `add node server s1 RJ45[2] FIBER` or `--prop portLayout=...`',
   undoable: true,
   argSpec: [
     { name: 'nodeType', type: 'nodeType', required: true },
-    { name: 'id', type: 'string' },
+    { name: 'rest', type: 'string', variadic: true },
   ],
   flags: [
     { name: 'id', takesValue: true },
@@ -32,27 +41,75 @@ const addNode: CommandDef = {
     { name: 'prop', takesValue: true, repeatable: true },
   ],
   run(args, ctx): CommandResult {
-    const [rawType, inlineId] = args.positional;
-    const nodeType = String(rawType);
+    const pos = args.positional;
+    const nodeType = String(pos[0] ?? '');
     if (!isNodeType(nodeType)) {
       return { ok: false, message: `unknown node type: ${nodeType}` };
     }
+    const tail = pos.slice(1).map(String);
     const flagId = flagString(args.flags.id);
-    const id = String(flagId ?? inlineId ?? autoId(ctx.graph, nodeType as NodeType));
     const tagList = flagList(args.flags.tag).map(String);
     const propEntries = flagList(args.flags.prop).map(String);
     const properties: Record<string, string | number | boolean> = {};
     const nameFlag = flagString(args.flags.name);
     if (nameFlag !== undefined) properties.name = String(nameFlag);
     for (const raw of propEntries) {
-      const eq = raw.indexOf('=');
+      const eq = String(raw).indexOf('=');
       if (eq === -1) {
         return { ok: false, message: `bad --prop (need key=value): ${raw}` };
       }
-      const k = raw.slice(0, eq);
-      const v = raw.slice(eq + 1);
+      const k = String(raw).slice(0, eq);
+      const v = String(raw).slice(eq + 1);
       const num = Number(v);
       properties[k] = Number.isFinite(num) && v.trim() !== '' ? num : v;
+    }
+
+    const isLayoutDevice = DEVICE_PORT_LAYOUT.has(nodeType);
+    let id: string;
+    let linePortLayout = '';
+
+    if (isLayoutDevice) {
+      if (flagId !== undefined) {
+        id = String(flagId);
+        linePortLayout = tail.join(' ').trim();
+      } else if (tail.length === 0) {
+        id = autoId(ctx.graph, nodeType as NodeType);
+        linePortLayout = '';
+      } else {
+        id = String(tail[0]!);
+        linePortLayout = tail.slice(1).join(' ').trim();
+      }
+    } else {
+      if (flagId !== undefined) {
+        id = String(flagId);
+        if (tail.length > 0) {
+          return {
+            ok: false,
+            message: `unexpected argument(s) for ${nodeType}: ${tail.join(' ')} (use --id, or use only positionals, not both)`,
+          };
+        }
+        linePortLayout = '';
+      } else if (tail.length === 0) {
+        id = autoId(ctx.graph, nodeType as NodeType);
+        linePortLayout = '';
+      } else if (tail.length === 1) {
+        id = String(tail[0]!);
+        linePortLayout = '';
+      } else {
+        return {
+          ok: false,
+          message: `unexpected extra argument(s) for ${nodeType}: ${tail.slice(1).join(' ')}`,
+        };
+      }
+    }
+
+    if (linePortLayout.length > 0) {
+      try {
+        expandPortLayoutToMediaList(linePortLayout);
+      } catch (e) {
+        return { ok: false, message: (e as Error).message };
+      }
+      properties.portLayout = linePortLayout;
     }
     try {
       const node = ctx.graph.addNode({
@@ -67,6 +124,95 @@ const addNode: CommandDef = {
         ok: true,
         message: `added ${node.type}[${node.id}]`,
       };
+    } catch (err) {
+      return { ok: false, message: (err as Error).message };
+    }
+  },
+};
+
+const modNode: CommandDef = {
+  name: 'mod node',
+  summary: 'Update name, tags, and node properties in place',
+  undoable: true,
+  argSpec: [
+    { name: 'nodeType', type: 'nodeType', required: true },
+    { name: 'id', type: 'nodeId', required: true },
+  ],
+  flags: [
+    { name: 'name', takesValue: true },
+    { name: 'tag+', takesValue: true, repeatable: true },
+    { name: 'tag-', takesValue: true, repeatable: true },
+    { name: 'prop', takesValue: true, repeatable: true },
+    { name: 'unprop', takesValue: true, repeatable: true },
+  ],
+  run(args, ctx): CommandResult {
+    const nodeType = String(args.positional[0]);
+    const id = String(args.positional[1]);
+    if (!isNodeType(nodeType)) {
+      return { ok: false, message: `unknown node type: ${nodeType}` };
+    }
+    const n = ctx.graph.getNode(nodeType as NodeType, id);
+    if (!n) {
+      return { ok: false, message: `no such node ${nodeType}[${id}]` };
+    }
+    const nameFlag = flagString(args.flags.name);
+    const tagAdds = flagList(args.flags['tag+']).map(String);
+    const tagRems = flagList(args.flags['tag-']).map(String);
+    const unprops = flagList(args.flags.unprop).map(String);
+    const propEntries = flagList(args.flags.prop).map(String);
+
+    const nextProps: Record<string, string | number | boolean> = {};
+    for (const raw of propEntries) {
+      const s = String(raw);
+      const eq = s.indexOf('=');
+      if (eq === -1) {
+        return { ok: false, message: `bad --prop (need key=value): ${raw}` };
+      }
+      const k = s.slice(0, eq);
+      const v = s.slice(eq + 1);
+      const num = Number(v);
+      nextProps[k] = Number.isFinite(num) && v.trim() !== '' ? num : v;
+    }
+    if (nameFlag !== undefined) nextProps.name = String(nameFlag);
+
+    if (nextProps.portLayout !== undefined) {
+      const pl = String(nextProps.portLayout).trim();
+      if (pl.length) {
+        try {
+          expandPortLayoutToMediaList(pl);
+        } catch (e) {
+          return { ok: false, message: (e as Error).message };
+        }
+      }
+    }
+
+    const propertyRemove: string[] = unprops
+      .map((x) => String(x).trim())
+      .filter((x) => x.length > 0);
+
+    let nextTags: string[] | undefined;
+    if (tagAdds.length > 0 || tagRems.length > 0) {
+      const tset = new Set([...n.tags]);
+      for (const t of tagRems) tset.delete(t);
+      for (const t of tagAdds) tset.add(t);
+      nextTags = [...tset];
+    }
+
+    const patch: NodePatch = {};
+    if (nextTags) patch.tags = nextTags;
+    if (propertyRemove.length) patch.propertyRemove = propertyRemove;
+    if (Object.keys(nextProps).length > 0) patch.properties = nextProps;
+    if (!patch.tags && !patch.properties && !patch.propertyRemove) {
+      return {
+        ok: false,
+        message: 'nothing to change (use --name, --tag+, --tag-, --prop, or --unprop)',
+      };
+    }
+    try {
+      ctx.graph.updateNode(nodeType as NodeType, id, patch);
+      ctx.graphStore.touch();
+      ctx.projectStore.markDirty();
+      return { ok: true, message: `updated ${nodeType}[${id}]` };
     } catch (err) {
       return { ok: false, message: (err as Error).message };
     }
@@ -343,6 +489,7 @@ const clearHistory: CommandDef = {
 
 export const BUILTIN_COMMANDS: CommandDef[] = [
   addNode,
+  modNode,
   addLink,
   rmNode,
   tagAdd,

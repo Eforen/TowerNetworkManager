@@ -19,7 +19,7 @@
 import { computed, shallowRef } from 'vue';
 import { defineStore } from 'pinia';
 import { parse, serialize } from '@/format';
-import { Graph, validate } from '@/model';
+import { Graph, syncEphemeralDevicePorts, validate } from '@/model';
 
 export const useGraphStore = defineStore('graph', () => {
   const graph = shallowRef<Graph>(new Graph());
@@ -59,6 +59,7 @@ export const useGraphStore = defineStore('graph', () => {
    * call this after running so computed getters recompute.
    */
   function touch(): void {
+    syncEphemeralDevicePorts(graph.value);
     revision.value++;
   }
 

@@ -53,6 +53,62 @@ describe('executor pipeline', () => {
     expect(ctx.projectStore.dirty).toBe(true);
   });
 
+  it('add node server with portLayout materializes port slots on touch', async () => {
+    const { ctx, registry } = bootstrap();
+    const r = await execute(
+      'add node server s1 --prop portLayout="RJ45[2] FIBER[1]"',
+      registry,
+      ctx,
+    );
+    expect(r.ok).toBe(true);
+    expect(ctx.graph.getNode('port', 's1/port0')).toBeDefined();
+    expect(ctx.graph.getNode('port', 's1/port1')).toBeDefined();
+    expect(ctx.graph.getNode('port', 's1/port2')).toBeDefined();
+  });
+
+  it('add node server <id> <portLayout> sets inline portLayout', async () => {
+    const { ctx, registry } = bootstrap();
+    const r = await execute('add node server 12345 RJ45[2]', registry, ctx);
+    expect(r.ok).toBe(true);
+    const s = ctx.graph.getNode('server', '12345');
+    expect(s?.properties.portLayout).toBe('RJ45[2]');
+    expect(ctx.graph.getNode('port', '12345/port0')).toBeDefined();
+    expect(ctx.graph.getNode('port', '12345/port1')).toBeDefined();
+    const nics = [...ctx.graph.edges.values()].filter((e) => e.relation === 'NIC');
+    expect(nics).toHaveLength(2);
+    expect(nics.every((e) => e.fromKey === 'server:12345')).toBe(true);
+  });
+
+  it('mod node updates portLayout and re-syncs device ports', async () => {
+    const { ctx, registry } = bootstrap();
+    await execute('add node server s1 RJ45[1]', registry, ctx);
+    expect(ctx.graph.getNode('port', 's1/port0')?.tags).toContain('RJ45');
+    const r = await execute('mod node server s1 --prop portLayout=FIBER[1]', registry, ctx);
+    expect(r.ok).toBe(true);
+    expect(ctx.graph.getNode('server', 's1')?.properties.portLayout).toBe('FIBER[1]');
+    expect(ctx.graph.getNode('port', 's1/port0')?.tags).toContain('FiberOptic');
+  });
+
+  it('mod node --unprop removes a property', async () => {
+    const { ctx, registry } = bootstrap();
+    await execute('add node server s1 --prop portLayout="RJ45[1]"', registry, ctx);
+    const r = await execute('mod node server s1 --unprop portLayout', registry, ctx);
+    expect(r.ok).toBe(true);
+    const s = ctx.graph.getNode('server', 's1');
+    expect(s?.properties.portLayout).toBeUndefined();
+  });
+
+  it('add node port 0 with #UserPort creates consumer hardware id', async () => {
+    const { ctx, registry } = bootstrap();
+    const r = await execute(
+      'add node port 0 --tag UserPort --tag RJ45',
+      registry,
+      ctx,
+    );
+    expect(r.ok).toBe(true);
+    expect(ctx.graph.getNode('port', '0')).toBeDefined();
+  });
+
   it('rm node removes the node', async () => {
     const { ctx, registry } = bootstrap();
     await execute('add node server db01', registry, ctx);
@@ -97,7 +153,10 @@ describe('executor pipeline', () => {
     const { ctx, registry } = bootstrap();
     const r = await execute('help', registry, ctx);
     expect(r.ok).toBe(true);
-    if (r.ok) expect(r.message).toContain('add node');
+    if (r.ok) {
+      expect(r.message).toContain('add node');
+      expect(r.message).toContain('mod node');
+    }
   });
 });
 
@@ -210,13 +269,13 @@ describe('add link', () => {
 
   it('accepts edge properties via --prop', async () => {
     const { ctx, registry } = bootstrap();
-    await execute('add node port 0', registry, ctx);
-    // add_link needs a device port; id `0` is a user-port-shaped id but we
-    // just want any edge with props. Use NIC switch->port edge instead:
-    await execute('add node switch sw1', registry, ctx);
-    await execute('add node port port1', registry, ctx);
+    await execute(
+      'add node switch sw1 --prop portLayout="RJ45[1]"',
+      registry,
+      ctx,
+    );
     const r = await execute(
-      'add link switch[sw1] port[port1] NIC --prop mode=trunk',
+      'add link switch[sw1] port[sw1/port0] NIC --prop mode=trunk',
       registry,
       ctx,
     );

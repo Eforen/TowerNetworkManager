@@ -8,13 +8,19 @@
  */
 
 import { Graph } from './graph';
+import { expandPortLayoutToMediaList } from './portLayout';
 import {
   HARDWARE_ADDR_RE,
   NET_ADDR_RE,
-  PORT_SLUG_RE,
+  parseCompositeDevicePortId,
   isNetAddrType,
   parseNodeKey,
 } from './ids';
+import {
+  findDeviceForPortParentId,
+  hasDuplicateDeviceIdAcrossTypes,
+  isDeviceLayoutManagedPort,
+} from './devicePortSync';
 import { RELATION_META } from './relations';
 import { CANONICAL_TAGS, type Edge, type Node } from './types';
 
@@ -54,7 +60,7 @@ export function validate(graph: Graph): ValidationReport {
 }
 
 function validateNode(
-  _graph: Graph,
+  graph: Graph,
   node: Node,
   errors: ValidationIssue[],
   warnings: ValidationIssue[],
@@ -71,6 +77,25 @@ function validateNode(
   if (node.type === 'switch' || node.type === 'router') {
     checkNonNegativeInt(node, 'traversalsPerTick', errors);
     checkHardwareAddress(node, errors);
+  }
+  if (
+    node.type === 'server' ||
+    node.type === 'switch' ||
+    node.type === 'router'
+  ) {
+    const pl = String(node.properties['portLayout'] ?? '').trim();
+    if (pl.length > 0) {
+      try {
+        expandPortLayoutToMediaList(pl);
+      } catch (e) {
+        errors.push({
+          severity: 'error',
+          code: 'device.badPortLayout',
+          message: `${node.type}[${node.id}] portLayout: ${(e as Error).message}`,
+          nodeKey: key,
+        });
+      }
+    }
   }
   if (node.type === 'program') {
     for (const key of ['cpu', 'memory', 'storage']) {
@@ -153,7 +178,6 @@ function validateNode(
     }
   }
 
-  // Port id shape depends on UserPort-ness.
   if (node.type === 'port') {
     const isUser = node.tags.includes('UserPort');
     if (isUser) {
@@ -166,13 +190,62 @@ function validateNode(
         });
       }
     } else {
-      if (!PORT_SLUG_RE.test(node.id)) {
+      const c = parseCompositeDevicePortId(node.id);
+      if (!c) {
         errors.push({
           severity: 'error',
           code: 'port.deviceIdMalformed',
-          message: `device port[${node.id}] id must be 'port' + digits (e.g. port0, port1)`,
+          message: `device port[${node.id}] id must be parentId/portN (e.g. 79446/port0)`,
           nodeKey: key,
         });
+      } else {
+        if (hasDuplicateDeviceIdAcrossTypes(graph, c.parentId)) {
+          errors.push({
+            severity: 'error',
+            code: 'port.ambiguousDeviceParent',
+            message: `more than one of server|switch|router uses id ${c.parentId}; port[${node.id}] is ambiguous`,
+            nodeKey: key,
+          });
+        } else {
+          const dev = findDeviceForPortParentId(graph, c.parentId);
+          if (!dev) {
+            errors.push({
+              severity: 'error',
+              code: 'port.noDeviceParent',
+              message: `no server/switch/router node '${c.parentId}' for port[${node.id}]`,
+              nodeKey: key,
+            });
+          } else {
+            const pl = String(dev.node.properties['portLayout'] ?? '').trim();
+            if (pl.length === 0) {
+              errors.push({
+                severity: 'error',
+                code: 'port.noPortLayout',
+                message: `device port[${node.id}] requires ${c.parentId} to have a portLayout (e.g. RJ45[2] FIBER)`,
+                nodeKey: key,
+              });
+            } else {
+              try {
+                const slots = expandPortLayoutToMediaList(pl);
+                if (c.suffixIndex < 0 || c.suffixIndex >= slots.length) {
+                  errors.push({
+                    severity: 'error',
+                    code: 'port.portLayoutIndexOutOfRange',
+                    message: `port[${node.id}] not covered by ${dev.type}[${c.parentId}].portLayout (valid slots: 0..${slots.length - 1})`,
+                    nodeKey: key,
+                  });
+                }
+              } catch (e) {
+                errors.push({
+                  severity: 'error',
+                  code: 'port.badParentPortLayout',
+                  message: `${dev.type}[${c.parentId}].portLayout: ${(e as Error).message}`,
+                  nodeKey: key,
+                });
+              }
+            }
+          }
+        }
       }
     }
   }
@@ -485,7 +558,7 @@ function validatePortConnectivity(
         nodeKey: key,
       });
     }
-    if (!isUser && !hasNic) {
+    if (!isUser && !hasNic && !isDeviceLayoutManagedPort(graph, node)) {
       warnings.push({
         severity: 'warning',
         code: 'port.deviceNoNic',

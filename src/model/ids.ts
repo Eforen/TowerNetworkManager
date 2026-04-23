@@ -22,8 +22,24 @@ export const HARDWARE_ADDR_RE = /^\d{1,5}$/;
  * (`port0`, `port1`, `port10`). In-game port ids are always this shape —
  * no `eth0`, no custom slugs. UserPort (consumer) ports instead use
  * a pure-digit hardware address (see `HARDWARE_ADDR_RE`).
+ * @deprecated Standalone `port0` for NICs; prefer {@link DEVICE_PORT_COMPOSITE_RE}.
  */
 export const PORT_SLUG_RE = /^port\d+$/;
+
+/**
+ * Device port owned by a server/switch/router: `deviceId` + `/port` + index.
+ * Example: `79446/port0` … `79446/port7` for eight slots on server `79446`.
+ */
+export const DEVICE_PORT_COMPOSITE_RE =
+  /^([a-z0-9][a-z0-9_-]*)\/port[0-9]+$/;
+
+export function parseCompositeDevicePortId(
+  id: string,
+): { parentId: string; suffixIndex: number } | null {
+  const m = /^([a-z0-9][a-z0-9_-]*)\/port([0-9]+)$/.exec(id);
+  if (!m) return null;
+  return { parentId: m[1], suffixIndex: parseInt(m[2], 10) };
+}
 
 /**
  * Uplink id: exactly 4 lowercase letters, e.g. `comc`, `attn`. Not a
@@ -72,7 +88,11 @@ export function isNetAddrType(type: NodeType): boolean {
 export function isValidNodeId(type: NodeType, id: string): boolean {
   if (isNetAddrType(type)) return NET_ADDR_RE.test(id);
   if (type === 'uplink') return UPLINK_ID_RE.test(id);
-  if (type === 'port') return HARDWARE_ADDR_RE.test(id) || PORT_SLUG_RE.test(id);
+  if (type === 'port') {
+    if (HARDWARE_ADDR_RE.test(id)) return true;
+    if (DEVICE_PORT_COMPOSITE_RE.test(id)) return true;
+    return false;
+  }
   if (type === 'program') return PROGRAM_ID_RE.test(id);
   if (type === 'usagetype') return USAGE_TYPE_ID_RE.test(id);
   if (type === 'domain') return /^[a-z0-9][a-z0-9.-]*$/.test(id);

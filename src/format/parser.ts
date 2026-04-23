@@ -12,9 +12,12 @@
  * fragment into a running project.
  */
 
+import { syncEphemeralDevicePorts } from '@/model/devicePortSync';
+import { isPortLayoutToken } from '@/model/portLayout';
 import { ParseError, suggest } from './errors';
 import {
   Graph,
+  DEVICE_PORT_COMPOSITE_RE,
   HARDWARE_ADDR_RE,
   NET_ADDR_RE,
   NODE_ID_RE,
@@ -24,6 +27,7 @@ import {
   RELATION_META,
   RELATION_NAMES,
   isNetAddrType,
+  parseCompositeDevicePortId,
   relationsForPair,
   type NodeType,
   type PropertyValue,
@@ -75,6 +79,7 @@ export function parseInto(text: string, graph: Graph): void {
     if (stripped.length === 0) continue;
     parseStatement(stripped, line.srcLine, graph, ctx);
   }
+  syncEphemeralDevicePorts(graph);
 }
 
 interface ParseContext {
@@ -154,6 +159,10 @@ function parseStatement(
   graph: Graph,
   ctx: ParseContext,
 ): void {
+  // `portLayout` on devices materializes `port[parentId/portN]` before any
+  // line that can reference such ids (e.g. edges) is processed.
+  syncEphemeralDevicePorts(graph);
+
   // Arrow-prefix continuation: `->` or `=>` at column 1 after trim.
   if (text.startsWith('->') && !text.startsWith('->[')) {
     parseArrowRefLine(text, srcLine, graph, ctx);
@@ -168,7 +177,7 @@ function parseStatement(
     parseEdge(text, srcLine, graph);
     return;
   }
-  const created = parseEntity(text, srcLine, graph);
+  const created = parseEntity(text, srcLine, graph, ctx);
   ctx.anchor = created;
 }
 
@@ -176,10 +185,17 @@ function parseStatement(
 // Entity: <type> <id-or-address> [#Tag ...] [key=value ...]
 // ---------------------------------------------------------------------------
 
+const DEVICE_PORT_LAYOUT_TYPES: ReadonlySet<NodeType> = new Set([
+  'server',
+  'switch',
+  'router',
+]);
+
 function parseEntity(
   text: string,
   srcLine: number,
   graph: Graph,
+  ctx: ParseContext,
 ): { type: NodeType; id: string } {
   const cur = new Cursor(text, srcLine);
   const typeTok = cur.readWord();
@@ -196,15 +212,24 @@ function parseEntity(
   const type = typeTok as NodeType;
 
   if (type === 'port') {
-    return parsePortEntity(cur, graph);
+    return parsePortEntity(cur, graph, ctx);
   }
 
   cur.skipSpaces();
   const id = readIdentity(cur, type);
-
-  const { tags, properties } = readTagsAndProps(cur);
-
-  graph.addNode({ type, id, tags, properties });
+  if (DEVICE_PORT_LAYOUT_TYPES.has(type)) {
+    const { tags, properties, portLayout } = readDeviceTagsPropsAndPortLayout(
+      cur,
+    );
+    if (portLayout !== undefined) {
+      (properties as Record<string, string | number | boolean>).portLayout =
+        portLayout;
+    }
+    graph.addNode({ type, id, tags, properties });
+  } else {
+    const { tags, properties } = readTagsAndProps(cur);
+    graph.addNode({ type, id, tags, properties });
+  }
   return { type, id };
 }
 
@@ -231,8 +256,50 @@ const PORT_MEDIA_ALIASES: Record<string, 'RJ45' | 'FiberOptic'> = {
 function parsePortEntity(
   cur: Cursor,
   graph: Graph,
+  _ctx: ParseContext,
 ): { type: NodeType; id: string } {
   cur.skipSpaces();
+  if (cur.peek() === '"') {
+    const id = cur.readQuoted();
+    cur.skipSpaces();
+    const mediaWord = cur.readAlnumWord();
+    if (!mediaWord) {
+      throw new ParseError(
+        'expected port media (RJ45|RJ|FiberOptic|FIBER|F)',
+        cur.loc(),
+      );
+    }
+    const mediaTag = PORT_MEDIA_ALIASES[mediaWord.toLowerCase()];
+    if (!mediaTag) {
+      throw new ParseError(
+        `unknown port media '${mediaWord}' (use RJ45|RJ|FiberOptic|FIBER|F)`,
+        cur.startLoc(),
+      );
+    }
+    const { tags, properties } = readTagsAndProps(cur);
+    const allTags = tags.includes(mediaTag) ? tags : [mediaTag, ...tags];
+    const isUserPort = allTags.includes('UserPort');
+    if (isUserPort) {
+      if (!HARDWARE_ADDR_RE.test(id)) {
+        throw new ParseError(
+          'UserPort id in quotes must be 1..5 digit hardware',
+          cur.startLoc(),
+        );
+      }
+    } else if (!parseCompositeDevicePortId(id)) {
+      throw new ParseError(
+        'non-UserPort port id in quotes must be parentId/portN',
+        cur.startLoc(),
+      );
+    }
+    graph.addNode({
+      type: 'port',
+      id,
+      tags: allTags.slice(),
+      properties: { ...properties },
+    });
+    return { type: 'port', id };
+  }
   const firstDigits = cur.readDigits();
   if (firstDigits === undefined) {
     throw new ParseError(
@@ -279,28 +346,26 @@ function parsePortEntity(
   const { tags, properties } = readTagsAndProps(cur);
   const allTags = tags.includes(mediaTag) ? tags : [mediaTag, ...tags];
   const isUserPort = allTags.includes('UserPort');
+  if (!isUserPort) {
+    throw new ParseError(
+      'use portLayout on server, switch, or router for built-in ports (e.g. `server db01 RJ45[2] FIBER`); the `port` line is for #UserPort consumer hardware only',
+      cur.startLoc(),
+    );
+  }
   if (isUserPort && start !== end) {
     throw new ParseError(
       'UserPort range is not supported (hardware addresses are unique per customer)',
       cur.startLoc(),
     );
   }
-
-  let lastId = '';
-  for (let n = start; n <= end; n++) {
-    const id = isUserPort ? String(n) : `port${n}`;
-    graph.addNode({
-      type: 'port',
-      id,
-      tags: allTags.slice(),
-      properties: { ...properties },
-    });
-    lastId = id;
-  }
-  // Range entities anchor to the last port created; a following `->` / `=>`
-  // line applies to that port. Ranges are rare in practice; this matches
-  // the natural "last line" intuition.
-  return { type: 'port', id: lastId };
+  const id = String(start);
+  graph.addNode({
+    type: 'port',
+    id,
+    tags: allTags.slice(),
+    properties: { ...properties },
+  });
+  return { type: 'port', id };
 }
 
 // ---------------------------------------------------------------------------
@@ -416,12 +481,15 @@ function parseArrowEntityLine(
   // `:RelationName [{props}]` segment because the entity parser stops at
   // `:`. The simplest safe approach: find the last `:Pascal...` token that
   // isn't inside braces/quotes, split there.
+  // Spec: `=>` and `->` are continuation lines; they do not replace the
+  // anchor. Only a normal entity line updates ctx.anchor.
   const { entityText, trailer } = splitEntityTrailer(text.slice(2).trimStart());
-  const created = parseEntity(entityText, srcLine, graph);
+  const fromAnchor = ctx.anchor;
+  const created = parseEntity(entityText, srcLine, graph, ctx);
 
   const trailCur = new Cursor(trailer, srcLine);
   const { relation, properties } = readOptionalRelationAndProps(trailCur);
-  applyArrowEdge(graph, ctx.anchor, created, relation, properties, cur);
+  applyArrowEdge(graph, fromAnchor, created, relation, properties, cur);
 }
 
 /**
@@ -737,21 +805,35 @@ function readIdentity(cur: Cursor, type: NodeType): string {
     if (!id) throw new ParseError('expected a domain name', cur.loc());
     return id;
   }
-  // `port` ids are either numeric hardware addresses (UserPort) or
-  // plain slugs starting with a letter (device NICs). `readWord` already
-  // accepts both shapes; validate after.
+  // `port` ids: UserPort 1..5 digit hardware, or `parentId/port0` (device).
   if (type === 'port') {
-    const id = cur.readWord();
-    if (id === undefined) {
+    const w1 = cur.readWord();
+    if (w1 === undefined) {
       throw new ParseError('expected a port id', cur.loc());
     }
-    if (!HARDWARE_ADDR_RE.test(id) && !PORT_SLUG_RE.test(id)) {
-      throw new ParseError(
-        `invalid port id '${id}' (expected 1..5 digits for UserPort, or 'port' + digits like 'port0')`,
-        cur.startLoc(),
-      );
+    if (cur.peek() === '/') {
+      cur.advance(1);
+      const w2 = cur.readWord();
+      if (w2 === undefined || !PORT_SLUG_RE.test(w2)) {
+        throw new ParseError(
+          'expected port device id like parentId/port0',
+          cur.startLoc(),
+        );
+      }
+      const id = `${w1}/${w2}`;
+      if (!DEVICE_PORT_COMPOSITE_RE.test(id)) {
+        throw new ParseError(
+          `invalid composite port id ${JSON.stringify(id)}`,
+          cur.startLoc(),
+        );
+      }
+      return id;
     }
-    return id;
+    if (HARDWARE_ADDR_RE.test(w1)) return w1;
+    throw new ParseError(
+      "expected UserPort hardware id (1..5 digits) or parentId/portN (e.g. sw1/port0)",
+      cur.startLoc(),
+    );
   }
   if (type === 'uplink') {
     const id = cur.readWord();
@@ -801,6 +883,41 @@ function readTagsAndProps(cur: Cursor): TagsAndProps {
     properties[key] = value;
   }
   return { tags, properties };
+}
+
+/**
+ * `server` / `switch` / `router` lines: optional `RJ45[2] FIBER ...` run, then
+ * the usual #tags and key=value.
+ */
+function readDeviceTagsPropsAndPortLayout(
+  cur: Cursor,
+): TagsAndProps & { portLayout: string | undefined } {
+  const plParts: string[] = [];
+  for (;;) {
+    const save = cur.getPos();
+    cur.skipSpaces();
+    if (cur.eol() || cur.peek() === '#') {
+      cur.setPos(save);
+      break;
+    }
+    const raw = cur.readNonSpaceToken();
+    if (raw === undefined) {
+      cur.setPos(save);
+      break;
+    }
+    if (raw.includes('=')) {
+      cur.setPos(save);
+      break;
+    }
+    if (!isPortLayoutToken(raw)) {
+      cur.setPos(save);
+      break;
+    }
+    plParts.push(raw);
+  }
+  const rest = readTagsAndProps(cur);
+  const portLayout = plParts.length > 0 ? plParts.join(' ') : undefined;
+  return { ...rest, portLayout };
 }
 
 function readEdgeProps(cur: Cursor): Record<string, PropertyValue> {
@@ -871,6 +988,14 @@ class Cursor {
     this.srcLine = srcLine;
   }
 
+  getPos(): number {
+    return this.pos;
+  }
+
+  setPos(p: number): void {
+    this.pos = p;
+  }
+
   eol(): boolean {
     return this.pos >= this.text.length;
   }
@@ -927,6 +1052,21 @@ class Cursor {
     ) {
       end++;
     }
+    const out = this.text.slice(this.pos, end);
+    this.pos = end;
+    return out;
+  }
+
+  /** Unquoted token: non-space run (used for e.g. `RJ45[2]`). */
+  readNonSpaceToken(): string | undefined {
+    this.skipSpaces();
+    this.start();
+    if (this.pos >= this.text.length) return undefined;
+    let end = this.pos;
+    while (end < this.text.length && !/[\s]/.test(this.text[end])) {
+      end++;
+    }
+    if (end === this.pos) return undefined;
     const out = this.text.slice(this.pos, end);
     this.pos = end;
     return out;

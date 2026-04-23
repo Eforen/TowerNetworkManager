@@ -39,7 +39,8 @@ describe('id regex', () => {
 
   it('isValidNodeId routes per type', () => {
     expect(isValidNodeId('networkaddress', '@f1/c/1')).toBe(true);
-    expect(isValidNodeId('port', 'port0')).toBe(true);
+    expect(isValidNodeId('port', 'sw1/port0')).toBe(true);
+    expect(isValidNodeId('port', 'port0')).toBe(false);
     expect(isValidNodeId('port', '12345')).toBe(true);
     expect(isValidNodeId('port', '@f1/c/1')).toBe(false);
     expect(isValidNodeId('port', 'Bad-Port')).toBe(false);
@@ -69,14 +70,14 @@ describe('nodeKey / parseNodeKey', () => {
 describe('edgeId', () => {
   it('directed encodes from->to order', () => {
     const a = nodeKey('server', 'db01');
-    const b = nodeKey('port', 'port0');
-    expect(edgeId('NIC', a, b, true)).toBe('NIC:server:db01->port:port0');
-    expect(edgeId('NIC', b, a, true)).toBe('NIC:port:port0->server:db01');
+    const b = nodeKey('port', 'db01/port0');
+    expect(edgeId('NIC', a, b, true)).toBe('NIC:server:db01->port:db01/port0');
+    expect(edgeId('NIC', b, a, true)).toBe('NIC:port:db01/port0->server:db01');
   });
 
   it('undirected canonicalizes endpoints lexicographically', () => {
-    const a = nodeKey('port', 'port0');
-    const b = nodeKey('port', 'port1');
+    const a = nodeKey('port', 'a/port0');
+    const b = nodeKey('port', 'b/port0');
     expect(edgeId('NetworkCableLinkRJ45', a, b, false)).toBe(
       edgeId('NetworkCableLinkRJ45', b, a, false),
     );

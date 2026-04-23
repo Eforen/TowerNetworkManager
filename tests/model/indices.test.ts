@@ -17,11 +17,11 @@ describe('indices: byType and byTag', () => {
   it('tracks nodes by tag', () => {
     const g = new Graph();
     g.addNode({ type: 'port', id: '12345', tags: ['RJ45', 'UserPort'] });
-    g.addNode({ type: 'port', id: 'port0', tags: ['RJ45'] });
+    g.addNode({ type: 'port', id: 'sw1/port0', tags: ['RJ45'] });
     expect(g.nodesWithTag('UserPort').map((n) => n.id)).toEqual(['12345']);
     expect(g.nodesWithTag('RJ45').map((n) => n.id).sort()).toEqual([
       '12345',
-      'port0',
+      'sw1/port0',
     ]);
   });
 
@@ -104,15 +104,15 @@ describe('indices: adjacency', () => {
   it('incrementally maintained on add/remove', () => {
     const g = new Graph();
     g.addNode({ type: 'server', id: 'db01' });
-    g.addNode({ type: 'port', id: 'port0', tags: ['RJ45'] });
+    g.addNode({ type: 'port', id: 'db01/port0', tags: ['RJ45'] });
     const e = g.addEdge({
       relation: 'NIC',
       from: { type: 'server', id: 'db01' },
-      to: { type: 'port', id: 'port0' },
+      to: { type: 'port', id: 'db01/port0' },
     });
     expect(g.edgesOf('server', 'db01')).toHaveLength(1);
     g.removeEdge(e.id);
     expect(g.edgesOf('server', 'db01')).toHaveLength(0);
-    expect(g.edgesOf('port', 'port0')).toHaveLength(0);
+    expect(g.edgesOf('port', 'db01/port0')).toHaveLength(0);
   });
 });

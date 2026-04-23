@@ -71,10 +71,17 @@ export class GraphLayout {
         'link',
         forceLink<SimNode, SimLink>()
           .id((d) => d.id)
-          .distance((e) => 40 + 20 * e.model.strength)
+          .distance((e) => {
+            const s = e.model.strength;
+            const base = 40 + 20 * s;
+            // Device ↔ layout port: keep the NIC arm visibly longer; ~2× base.
+            if (e.model.relation === 'NIC') return base * 2;
+            return base;
+          })
           .strength((e) => 1 / Math.max(e.model.strength, 0.5)),
       )
-      .force('charge', forceManyBody<SimNode>().strength(-180))
+      // Weaker repulsion so the graph does not over-spread; pairs with longer NIC.
+      .force('charge', forceManyBody<SimNode>().strength(-95))
       .force('center', forceCenter(0, 0))
       .force(
         'collide',

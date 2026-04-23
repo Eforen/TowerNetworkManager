@@ -14,15 +14,17 @@ All commands exposed by the palette defined in [commandline.md](commandline.md).
 
 ### Node mutations
 
-- `add node <nodeType> [--id=<id>] [--name=<name>] [--tag=<tag>] (repeatable) [--prop <key>=<val>] (repeatable)`
+- `add node <nodeType> [ <id> [ <portLayout>… ] ] [--id=<id>] [--name=<name>] [--tag=<tag>] (repeatable) [--prop <key>=<val>] (repeatable)`
   - Creates a node. Type must be a known node type. Tags must be canonical.
+  - **`server` / `switch` / `router`:** after `<id>`, you may add **inline `portLayout`** as one or more tokens (file-format `RJ45[2] FIBER[1] …`). Example: `add node server 12345 RJ45[2] FIBER[1]`. If you set `--id=…`, all remaining positionals are layout: `add node server --id=s1 RJ45[2] FIBER[1]`. You can also set layout with `--prop portLayout=…` (quote if the value has spaces). Inline layout and `--prop portLayout=…` are merged; a non-empty inline layout wins for `portLayout` when both are present.
+  - For **`port` only** (and no `--id`), if the inline id looks like `N-M` (two non-negative integers), creates device ports `portN` through `portM` (same as `port N-M …` in the text format). Example: `add node port 0-1` adds `port0` and `port1`. Max span: 100 ports.
   - Example: `add node Server --name=db01 --prop address=10.0.0.5`
 
 - `rm node <id> [--force]`
   - Removes node and all incident edges. Cascading deletions are recorded for undo.
 
-- `mod node <id> [--name=<name>] [--tag+=<tag>] [--tag-=<tag>] [--prop <key>=<val>] [--unprop <key>]`
-  - Modifies properties, name, and tags in-place.
+- `mod node <nodeType> <id> [--name=<name>] [--tag+=<tag>] [--tag-=<tag>] [--prop <key>=<val>] [--unprop <key>]` (repeatable tag/unprop)
+  - Modifies properties, name, and tags in-place. `portLayout` on server/switch/router is a normal string property: `mod node server s1 --prop portLayout="RJ45[3] FIBER"`.
 
 - `rename node <id> <newId>`
   - Changes a node's id; rewrites edge endpoints. Fails if `<newId>` exists.

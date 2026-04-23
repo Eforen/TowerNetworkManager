@@ -1,8 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { mount } from '@vue/test-utils';
+import { mount, type VueWrapper } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import GraphView from '@/view/GraphView.vue';
 import { useGraphStore, useFsmStore } from '@/store';
+import { simNodeForDrag } from '@/view/graphNodeDrag';
+import type { GraphLayout } from '@/view/layout';
+import type { SimNode } from '@/view/layout';
+import type { ComponentPublicInstance } from 'vue';
 
 /**
  * Component test for edge hover tooltip. happy-dom doesn't lay out SVG
@@ -25,6 +29,82 @@ function makeView() {
 
   return mount(GraphView, { attachTo: document.body });
 }
+
+type GraphExposed = { simNodes: unknown; layout: GraphLayout };
+
+function getSimNodes(wrapper: VueWrapper<ComponentPublicInstance<GraphExposed>>): SimNode[] {
+  // Prefer the simulation source of truth: exposed `simNodes` mirrors this but some
+  // test utils unwrap refs inconsistently; `layout.nodes()` always matches d3-drag.
+  return (wrapper.vm as unknown as GraphExposed).layout.nodes();
+}
+
+describe('GraphView node drag binding', () => {
+  it('exposes a data-sim-id on every node g that resolves to the sim array via simNodeForDrag', async () => {
+    const wrapper = makeView();
+    await wrapper.vm.$nextTick();
+    const list = getSimNodes(wrapper);
+    const groups = wrapper.findAll('[data-sim-node]');
+    expect(groups.length).toBe(list.length);
+    for (const g of groups) {
+      const el = g.element;
+      const id = g.attributes('data-sim-id');
+      expect(id).toBeTruthy();
+      const resolved = simNodeForDrag(el, list);
+      expect(resolved).not.toBeNull();
+      expect(resolved!.id).toBe(id);
+    }
+  });
+
+  it('simNodeForDrag on the shape is the same SimNode d3 would pin (Vue never sets d3 __data__)', async () => {
+    const wrapper = makeView();
+    await wrapper.vm.$nextTick();
+    const list = getSimNodes(wrapper);
+    const groups = wrapper.findAll('[data-sim-node]');
+    expect(list.length).toBeGreaterThan(1);
+    const pick = 1;
+    const target = list[pick]!;
+
+    const gWrap = groups[pick]!;
+    expect(gWrap.attributes('data-sim-id')).toBe(target.id);
+    const path = gWrap.find('.tni-graph__node-shape');
+    expect(path.exists()).toBe(true);
+
+    const fromDom = simNodeForDrag(path.element, list);
+    expect(fromDom).toBe(target);
+    fromDom!.fx = 7;
+    fromDom!.fy = 8;
+    const sameFromLayout = (wrapper.vm as unknown as GraphExposed).layout
+      .nodes()
+      .find((n) => n.id === target.id);
+    expect(sameFromLayout).toBe(target);
+    expect(sameFromLayout?.fx).toBe(7);
+    expect(sameFromLayout?.fy).toBe(8);
+  });
+
+  it('opens inspector on normal node click', async () => {
+    const wrapper = makeView();
+    await wrapper.vm.$nextTick();
+    const fsm = useFsmStore();
+    expect(fsm.state.kind).toBe('Idle');
+
+    await wrapper.findAll('[data-sim-node]')[0]!.trigger('click');
+    expect(fsm.state.kind).toBe('NodeInspectorOpen');
+  });
+
+  it('ignores default-prevented node click (drag release path)', async () => {
+    const wrapper = makeView();
+    await wrapper.vm.$nextTick();
+    const fsm = useFsmStore();
+    expect(fsm.state.kind).toBe('Idle');
+
+    const node = wrapper.findAll('[data-sim-node]')[0]!;
+    const ev = new MouseEvent('click', { bubbles: true, cancelable: true });
+    ev.preventDefault();
+    node.element.dispatchEvent(ev);
+    await wrapper.vm.$nextTick();
+    expect(fsm.state.kind).toBe('Idle');
+  });
+});
 
 describe('GraphView edge hover tooltip', () => {
   beforeEach(() => {

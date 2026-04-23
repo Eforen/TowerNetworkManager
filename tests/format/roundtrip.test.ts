@@ -6,10 +6,9 @@ const EXAMPLE_TNI = `!tni v1
 
 floor f1
 rack r1 floor=f1
-switch sw1
+switch sw1 RJ45[1]
 server db01 address=10.0.0.5
 
-port 0 RJ45
 port 12345 RJ45 #UserPort
 
 customertype casual label="Casual Dweller"
@@ -26,8 +25,7 @@ program media-store pool.provide.main=16
 floor[f1] -> rack[r1] :FloorAssignment
 rack[r1] -> switch[sw1] :RackAssignment
 rack[r1] -> server[db01] :RackAssignment
-switch[sw1] -> port[port0] :NIC
-port[port0] -> port[12345] :NetworkCableLinkRJ45
+port[sw1/port0] -> port[12345] :NetworkCableLinkRJ45
 customer[organic-goat] -> port[12345] :Owner
 
 server[db01] -> program[database] :Install {amount=2}
@@ -47,8 +45,6 @@ describe('format – round trip through the example file', () => {
 
     expect(b.stats()).toEqual(a.stats());
 
-    // Each node in `a` exists in `b` with the same tag/property map after
-    // defaults have been re-applied on both sides.
     for (const [key, nodeA] of a.nodes) {
       const nodeB = b.nodes.get(key);
       expect(nodeB).toBeDefined();
@@ -56,7 +52,6 @@ describe('format – round trip through the example file', () => {
       expect(nodeB!.properties).toEqual(nodeA.properties);
     }
 
-    // Edges compared by id; relation + properties stable.
     for (const [id, edgeA] of a.edges) {
       const edgeB = b.edges.get(id);
       expect(edgeB).toBeDefined();

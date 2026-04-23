@@ -9,7 +9,8 @@
  *   3. One blank line separator.
  *   4. Edges grouped by relation per `RELATION_ORDER`; within a group
  *      sorted by `(fromType, fromId, toType, toId)` after canonicalizing
- *      undirected endpoints into lex order.
+ *      undirected endpoints into lex order. `NIC` from a device to its own
+ *      `portLayout` slot (no edge props) is omitted; sync recreates them on load.
  *   5. Tags before properties; tags sorted; property keys sorted.
  *   6. Strings quoted with minimal escaping.
  *   7. Default tags and properties for a node type are elided so that
@@ -29,6 +30,8 @@ import {
   NODE_ID_RE,
   PORT_SLUG_RE,
   RELATION_META,
+  isDeviceLayoutManagedPort,
+  isImplicitLayoutNicEdge,
   isNetAddrType,
   parseNodeKey,
   type Edge,
@@ -83,14 +86,21 @@ export function serialize(graph: Graph): string {
     const nodes = graph.nodesOfType(type);
     if (nodes.length === 0) continue;
     nodes.sort((a, b) => a.id.localeCompare(b.id));
-    for (const node of nodes) lines.push(serializeNode(node));
+    for (const node of nodes) {
+      if (type === 'port' && isDeviceLayoutManagedPort(graph, node)) {
+        continue;
+      }
+      lines.push(serializeNode(node, graph));
+    }
   }
 
   lines.push('');
 
   for (const relation of RELATION_ORDER) {
     const edges = [...graph.edges.values()].filter(
-      (e) => e.relation === relation,
+      (e) =>
+        e.relation === relation &&
+        !(e.relation === 'NIC' && isImplicitLayoutNicEdge(graph, e)),
     );
     if (edges.length === 0) continue;
     const meta = RELATION_META[relation];
@@ -109,10 +119,14 @@ export function serialize(graph: Graph): string {
 // Nodes
 // ---------------------------------------------------------------------------
 
-function serializeNode(node: Node): string {
+function serializeNode(node: Node, graph: Graph): string {
   if (node.type === 'port') return serializePortNode(node);
 
   const parts: string[] = [node.type, formatIdentity(node.type, node.id)];
+  if (node.type === 'server' || node.type === 'switch' || node.type === 'router') {
+    const pl = String(node.properties['portLayout'] ?? '').trim();
+    if (pl) parts.push(pl);
+  }
 
   const defaults = DEFAULT_TAGS_BY_TYPE[node.type] ?? [];
   const emittedTags = node.tags
@@ -121,7 +135,14 @@ function serializeNode(node: Node): string {
   for (const t of emittedTags) parts.push(`#${t}`);
 
   const defaultProps = DEFAULT_PROPERTIES_BY_TYPE[node.type] ?? {};
-  const keys = Object.keys(node.properties).sort((a, b) => a.localeCompare(b));
+  const keys = Object.keys(node.properties)
+    .filter((k) => {
+      if (k === 'portLayout' && (node.type === 'server' || node.type === 'switch' || node.type === 'router')) {
+        return false;
+      }
+      return true;
+    })
+    .sort((a, b) => a.localeCompare(b));
   for (const k of keys) {
     const v = node.properties[k];
     if (defaultProps[k] !== undefined && defaultProps[k] === v) continue;
@@ -141,9 +162,16 @@ function serializeNode(node: Node): string {
  */
 function serializePortNode(node: Node): string {
   const isUser = node.tags.includes('UserPort');
-  const numberText = isUser ? node.id : node.id.replace(/^port/, '');
   const media = node.tags.includes('FiberOptic') ? 'FiberOptic' : 'RJ45';
-  const parts: string[] = ['port', numberText, media];
+  let second: string;
+  if (isUser) {
+    second = node.id;
+  } else if (node.id.includes('/')) {
+    second = quoteString(node.id);
+  } else {
+    second = node.id.replace(/^port/, '');
+  }
+  const parts: string[] = ['port', second, media];
 
   const defaults = DEFAULT_TAGS_BY_TYPE.port ?? [];
   const hidden = new Set<string>([...defaults, 'RJ45', 'FiberOptic']);
@@ -212,10 +240,9 @@ function serializeEdgeLine(pe: PreparedEdge): string {
 function formatIdentity(type: NodeType, id: string): string {
   if (isNetAddrType(type)) return id; // e.g. @f1/c/1
   if (type === 'port') {
-    // UserPort-tagged ports use 1..5 digits; device ports use a plain
-    // slug. Both are emitted bare.
-    if (HARDWARE_ADDR_RE.test(id) || PORT_SLUG_RE.test(id)) return id;
-    return quoteString(id);
+    if (HARDWARE_ADDR_RE.test(id)) return id;
+    if (id.includes('/')) return quoteString(id);
+    return id;
   }
   if (type === 'domain' && !NODE_ID_RE.test(id)) {
     return quoteString(id);
