@@ -6,7 +6,7 @@ Phased build of the Tower Networking Inc PWA per [docs/specs/](docs/specs/). Sta
 
 - Vite + Vue 3 + TypeScript strict + Pinia + `vite-plugin-pwa`.
 - Styling: plain CSS with `--tni-*` custom properties at `:root` (light/dark), matching [docs/specs/visualization.md](docs/specs/visualization.md) Theming.
-- d3 pieces: `d3-force`, `d3-selection`, `d3-zoom`, `d3-drag`, `d3-quadtree`.
+- d3 pieces: `d3-force`, `d3-selection`, `d3-zoom`, `d3-quadtree` (`d3-drag` only as a dependency of `d3-zoom`). Node dragging in `GraphView` uses pointer events + `d3.pointer`, not `d3.drag`.
 - Test: Vitest + @vue/test-utils; parser/analyzer are pure-TS and unit-tested.
 - Lint: ESLint + Prettier.
 

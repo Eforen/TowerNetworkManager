@@ -1,9 +1,9 @@
 import type { SimNode } from './layout';
 
 /**
- * d3-drag passes datum from `__data__` on the selected `g`, but Vue `v-for`
- * never sets that. Each node group carries `data-sim-id="${nodeKey}"` so the
- * SimNode can be resolved from the live simulation array.
+ * Map a DOM event target to a `SimNode` using `data-sim-id` on the node
+ * group (Vue does not set d3 `__data__` on `g` elements). Used in tests;
+ * `GraphView` primary drag path uses the key from the `v-for` item instead.
  */
 export function simNodeForDrag(
   startTarget: EventTarget | null,

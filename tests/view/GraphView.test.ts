@@ -34,7 +34,7 @@ type GraphExposed = { simNodes: unknown; layout: GraphLayout };
 
 function getSimNodes(wrapper: VueWrapper<ComponentPublicInstance<GraphExposed>>): SimNode[] {
   // Prefer the simulation source of truth: exposed `simNodes` mirrors this but some
-  // test utils unwrap refs inconsistently; `layout.nodes()` always matches d3-drag.
+  // test utils unwrap refs inconsistently; `layout.nodes()` always matches the sim.
   return (wrapper.vm as unknown as GraphExposed).layout.nodes();
 }
 
@@ -55,7 +55,7 @@ describe('GraphView node drag binding', () => {
     }
   });
 
-  it('simNodeForDrag on the shape is the same SimNode d3 would pin (Vue never sets d3 __data__)', async () => {
+  it('simNodeForDrag on the shape matches the same SimNode as `layout.nodes()` (no d3 datum on Vue `g`s)', async () => {
     const wrapper = makeView();
     await wrapper.vm.$nextTick();
     const list = getSimNodes(wrapper);
