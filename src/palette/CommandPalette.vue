@@ -68,6 +68,7 @@ function refreshCompletions(): void {
     caret.value,
     registry,
     graphStore.graph,
+    { projects: () => projectStore.list() },
   );
   candidates.value = result.candidates;
   replaceRange.value = result.replace;
@@ -92,24 +93,56 @@ function onInput(ev: globalThis.Event): void {
 }
 
 /**
- * Insert the currently selected candidate at the replace range, collapse
- * the completions popup, and leave the caret just after the inserted text.
- * The next keystroke (`inputChanged` dispatch) will re-open completions.
+ * Insert the currently selected candidate at the replace range and
+ * immediately recompute completions for the new caret position. If the
+ * accepted candidate drills deeper (e.g. `server[` expects an id next),
+ * the popup stays open showing the next layer of candidates. If the
+ * accepted value moves cleanly past a slot and there are more positional
+ * args to fill, a trailing space is appended so completions for the next
+ * slot appear without the user having to type space first.
  */
 function acceptSelectedCandidate(): void {
   if (candidates.value.length === 0) return;
   const cand = candidates.value[selectedIndex.value] ?? candidates.value[0];
-  const { buffer: next, caret: nextCaret } = applyCandidate(
-    buffer.value,
-    cand,
-    replaceRange.value,
-  );
-  buffer.value = next;
-  caret.value = nextCaret;
+  // Ignore sentinel "(no X…)" candidates: their `value` is whatever the
+  // user typed, so accepting them is a no-op. Just dismiss the popup.
+  const isSentinel =
+    cand.detail === 'empty' || cand.detail === 'no match';
+  if (isSentinel) {
+    candidates.value = [];
+    selectedIndex.value = 0;
+    fsm.dispatch({ type: 'escape' });
+    return;
+  }
+  const applied = applyCandidate(buffer.value, cand, replaceRange.value);
+  buffer.value = applied.buffer;
+  caret.value = applied.caret;
+
+  // Heuristic for "slot is now complete": the accepted value doesn't end
+  // with a delimiter that signals more input for the SAME slot (like `[`
+  // for typed-refs). If complete and another positional arg may follow,
+  // append a space so the next slot's completer fires.
+  const endsMidSlot = cand.value.endsWith('[');
+  if (!endsMidSlot) {
+    const before = buffer.value.slice(0, caret.value);
+    const after = buffer.value.slice(caret.value);
+    if (!before.endsWith(' ')) {
+      buffer.value = `${before} ${after}`;
+      caret.value += 1;
+    }
+  }
+
   void nextTick(() => syncInputRef());
-  candidates.value = [];
-  selectedIndex.value = 0;
-  fsm.dispatch({ type: 'escape' });
+  // Recompute for the new buffer/caret. If follow-ups exist, keep the
+  // popup visible; otherwise collapse.
+  refreshCompletions();
+  if (candidates.value.length > 0) {
+    selectedIndex.value = 0;
+    // FSM is already ShowingCompletions; no dispatch needed.
+  } else {
+    selectedIndex.value = 0;
+    fsm.dispatch({ type: 'escape' });
+  }
 }
 
 /**

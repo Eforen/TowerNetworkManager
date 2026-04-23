@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import CommandPalette from '@/palette/CommandPalette.vue';
-import { useFsmStore } from '@/store';
+import { useFsmStore, useGraphStore, useProjectStore, MemoryStorage } from '@/store';
 import { resetRegistry } from '@/commands';
 
 /**
@@ -205,7 +205,108 @@ describe('CommandPalette – keyboard flow', () => {
     await keydown(w, 'Tab');
     const input = w.find('input.tni-palette__input')
       .element as HTMLInputElement;
-    expect(input.value).toBe('add node');
+    // A trailing space is auto-inserted so the next slot's completer
+    // fires immediately; the important invariant is no `add add` duplication.
+    expect(input.value).toBe('add node ');
+    w.unmount();
+  });
+
+  // Regression for the user-reported bug: typing `add link server[` char
+  // by char should surface server[<id>] candidates, not wait for a trailing
+  // space and backspace roundtrip before the popup appears.
+  it('shows typed-ref candidates while typing `add link server[` char by char', async () => {
+    setActivePinia(createPinia());
+    resetRegistry();
+    const fsm = useFsmStore();
+    const graphStore = useGraphStore();
+    graphStore.graph.addNode({ type: 'server', id: 'db01' });
+    graphStore.graph.addNode({ type: 'server', id: 'db02' });
+    fsm.dispatch({ type: 'loadDone' });
+    fsm.dispatch({ type: 'backtick' });
+    const w = mount(CommandPalette, { attachTo: document.body });
+
+    const text = 'add link server[';
+    for (let i = 1; i <= text.length; i++) {
+      await typeInput(w, text.slice(0, i));
+    }
+    const values = w.findAll('li').map((li) => li.text());
+    expect(values.some((v) => v.includes('server[db01]'))).toBe(true);
+    expect(values.some((v) => v.includes('server[db02]'))).toBe(true);
+    w.unmount();
+  });
+
+  // Regression for the user-reported bug: after Tab completes `add link ser`
+  // to `add link server[`, the popup must reopen with the server ids instead
+  // of collapsing.
+  it('keeps the popup open with follow-up candidates after Tab-accepting a typed-ref prefix', async () => {
+    setActivePinia(createPinia());
+    resetRegistry();
+    const fsm = useFsmStore();
+    const graphStore = useGraphStore();
+    graphStore.graph.addNode({ type: 'server', id: 'db01' });
+    graphStore.graph.addNode({ type: 'server', id: 'db02' });
+    fsm.dispatch({ type: 'loadDone' });
+    fsm.dispatch({ type: 'backtick' });
+    const w = mount(CommandPalette, { attachTo: document.body });
+
+    await typeInput(w, 'add link ser');
+    await keydown(w, 'Tab');
+
+    const input = w.find('input.tni-palette__input')
+      .element as HTMLInputElement;
+    // Candidate ends with `[` so no space is auto-inserted.
+    expect(input.value).toBe('add link server[');
+    // Popup must still be visible with server ids.
+    const values = w.findAll('li').map((li) => li.text());
+    expect(values.some((v) => v.includes('server[db01]'))).toBe(true);
+    expect(values.some((v) => v.includes('server[db02]'))).toBe(true);
+    w.unmount();
+  });
+
+  // After completing a full typed-ref (`server[db01]`), the popup should
+  // auto-advance to the `to` slot (since a space is inserted) and show
+  // the next layer of candidates.
+  it('auto-advances to the next slot after completing a full typed-ref', async () => {
+    setActivePinia(createPinia());
+    resetRegistry();
+    const fsm = useFsmStore();
+    const graphStore = useGraphStore();
+    graphStore.graph.addNode({ type: 'server', id: 'db01' });
+    graphStore.graph.addNode({ type: 'customer', id: 'organic-goat' });
+    fsm.dispatch({ type: 'loadDone' });
+    fsm.dispatch({ type: 'backtick' });
+    const w = mount(CommandPalette, { attachTo: document.body });
+
+    await typeInput(w, 'add link server[db');
+    await keydown(w, 'Tab');
+
+    const input = w.find('input.tni-palette__input')
+      .element as HTMLInputElement;
+    expect(input.value).toBe('add link server[db01] ');
+    // Popup should now show `to` slot candidates (type[ stubs).
+    const values = w.findAll('li').map((li) => li.text());
+    expect(values.some((v) => v.includes('customer['))).toBe(true);
+    w.unmount();
+  });
+
+  it('shows project-slug candidates for `load <slug>`', async () => {
+    setActivePinia(createPinia());
+    resetRegistry();
+    const fsm = useFsmStore();
+    const projectStore = useProjectStore();
+    projectStore.setStorage(new MemoryStorage());
+    projectStore.newProject('alpha');
+    projectStore.save();
+    projectStore.newProject('beta');
+    projectStore.save();
+    fsm.dispatch({ type: 'loadDone' });
+    fsm.dispatch({ type: 'backtick' });
+    const w = mount(CommandPalette, { attachTo: document.body });
+
+    await typeInput(w, 'load ');
+    const values = w.findAll('li').map((li) => li.text());
+    expect(values.some((v) => v.includes('alpha'))).toBe(true);
+    expect(values.some((v) => v.includes('beta'))).toBe(true);
     w.unmount();
   });
 
@@ -217,7 +318,8 @@ describe('CommandPalette – keyboard flow', () => {
       .element as HTMLInputElement;
     // Candidate list is alphabetical; `add link` sorts before `add node`.
     // The critical invariant is that the first word is not duplicated.
-    expect(input.value).toBe('add link');
+    // A trailing space is auto-inserted so the next slot's completer fires.
+    expect(input.value).toBe('add link ');
     expect(input.value.startsWith('add add')).toBe(false);
     w.unmount();
   });

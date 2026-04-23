@@ -79,9 +79,9 @@ const addLink: CommandDef = {
     'Create an edge between two nodes: `add link type[id] type[id] [Relation]`',
   undoable: true,
   argSpec: [
-    { name: 'from', type: 'string', required: true },
-    { name: 'to', type: 'string', required: true },
-    { name: 'relation', type: 'string' },
+    { name: 'from', type: 'typedRef', required: true },
+    { name: 'to', type: 'typedRef', required: true },
+    { name: 'relation', type: 'relation' },
   ],
   flags: [{ name: 'prop', takesValue: true, repeatable: true }],
   run(args, ctx): CommandResult {
@@ -261,7 +261,7 @@ const help: CommandDef = {
 const saveCmd: CommandDef = {
   name: 'save',
   summary: 'Save the current project to localStorage',
-  argSpec: [{ name: 'slug', type: 'string' }],
+  argSpec: [{ name: 'slug', type: 'projectSlug' }],
   run(args, ctx): CommandResult {
     const slug = args.positional[0] as string | undefined;
     try {
@@ -279,7 +279,7 @@ const saveCmd: CommandDef = {
 const loadCmd: CommandDef = {
   name: 'load',
   summary: 'Load a project from localStorage',
-  argSpec: [{ name: 'slug', type: 'string', required: true }],
+  argSpec: [{ name: 'slug', type: 'projectSlug', required: true }],
   run(args, ctx): CommandResult {
     const slug = String(args.positional[0]);
     try {
@@ -319,7 +319,7 @@ const listProjects: CommandDef = {
 const rmProject: CommandDef = {
   name: 'rm project',
   summary: 'Delete a project from localStorage',
-  argSpec: [{ name: 'slug', type: 'string', required: true }],
+  argSpec: [{ name: 'slug', type: 'projectSlug', required: true }],
   flags: [{ name: 'force', takesValue: false }],
   run(args, ctx): CommandResult {
     const slug = String(args.positional[0]);

@@ -182,3 +182,143 @@ describe('applyCandidate', () => {
     expect(out.buffer).toBe('add node server');
   });
 });
+
+describe('add link completions', () => {
+  function linkGraph(): Graph {
+    const g = new Graph();
+    g.addNode({ type: 'customer', id: 'organic-goat' });
+    g.addNode({ type: 'customer', id: 'casual-dweller' });
+    g.addNode({ type: 'networkaddress', id: '@f1/c/3' });
+    g.addNode({ type: 'port', id: '52682', tags: ['UserPort', 'RJ45'] });
+    g.addNode({ type: 'server', id: 'db01' });
+    return g;
+  }
+
+  function serverlessGraph(): Graph {
+    const g = new Graph();
+    g.addNode({ type: 'customer', id: 'organic-goat' });
+    g.addNode({ type: 'port', id: '52682', tags: ['UserPort', 'RJ45'] });
+    return g;
+  }
+
+  it('suggests node types with `[` after `add link `', () => {
+    const r = buildRegistry();
+    const g = linkGraph();
+    const input = 'add link ';
+    const { candidates, hint } = complete(input, input.length, r, g);
+    expect(hint).toContain('typedRef');
+    const values = candidates.map((c) => c.value);
+    expect(values).toContain('customer[');
+    expect(values).toContain('server[');
+  });
+
+  it('filters type prefixes for the from typed-ref', () => {
+    const r = buildRegistry();
+    const g = linkGraph();
+    const input = 'add link cust';
+    const { candidates } = complete(input, input.length, r, g);
+    const values = candidates.map((c) => c.value);
+    expect(values).toContain('customer[');
+    expect(values.every((v) => v.toLowerCase().startsWith('cust'))).toBe(true);
+  });
+
+  it('suggests node ids after `add link customer[`', () => {
+    const r = buildRegistry();
+    const g = linkGraph();
+    const input = 'add link customer[';
+    const { candidates } = complete(input, input.length, r, g);
+    const values = candidates.map((c) => c.value);
+    expect(values).toContain('customer[organic-goat]');
+    expect(values).toContain('customer[casual-dweller]');
+  });
+
+  it('filters node ids by prefix inside the brackets', () => {
+    const r = buildRegistry();
+    const g = linkGraph();
+    const input = 'add link customer[org';
+    const { candidates } = complete(input, input.length, r, g);
+    const values = candidates.map((c) => c.value);
+    expect(values).toContain('customer[organic-goat]');
+    expect(values).not.toContain('customer[casual-dweller]');
+  });
+
+  it('suggests the to typed-ref after a complete from', () => {
+    const r = buildRegistry();
+    const g = linkGraph();
+    const input = 'add link customer[organic-goat] netw';
+    const { candidates } = complete(input, input.length, r, g);
+    const values = candidates.map((c) => c.value);
+    expect(values).toContain('networkaddress[');
+  });
+
+  it('restricts relation candidates to those legal for the two endpoints', () => {
+    const r = buildRegistry();
+    const g = linkGraph();
+    const input = 'add link customer[organic-goat] networkaddress[@f1/c/3] ';
+    const { candidates, hint } = complete(input, input.length, r, g);
+    expect(hint).toContain('relation');
+    const values = candidates.map((c) => c.value);
+    // AssignedTo is the canonical relation between those two (in either
+    // order via auto-flip). Unrelated relations should not appear.
+    expect(values).toContain('AssignedTo');
+    expect(values).not.toContain('NIC');
+  });
+
+  it('filters relation candidates by the typed partial', () => {
+    const r = buildRegistry();
+    const g = linkGraph();
+    const input = 'add link customer[organic-goat] port[52682] Ow';
+    const { candidates } = complete(input, input.length, r, g);
+    const values = candidates.map((c) => c.value);
+    expect(values).toContain('Owner');
+    expect(values.every((v) => v.startsWith('Ow'))).toBe(true);
+  });
+
+  it('applyCandidate finishes a typed-ref without duplicating', () => {
+    const r = buildRegistry();
+    const g = linkGraph();
+    const input = 'add link cust';
+    const { candidates, replace } = complete(input, input.length, r, g);
+    const cand = candidates.find((c) => c.value === 'customer[');
+    expect(cand).toBeDefined();
+    const out = applyCandidate(input, cand!, replace);
+    expect(out.buffer).toBe('add link customer[');
+  });
+
+  // Regression for the reported bug: typing `add link server[` on a graph
+  // with NO server nodes used to return 0 candidates, so the popup stayed
+  // hidden and it looked like autocomplete was broken. We now emit a
+  // non-insertable sentinel so the user gets immediate feedback.
+  it('emits an explanatory sentinel when the type has no nodes', () => {
+    const r = buildRegistry();
+    const g = serverlessGraph();
+    const input = 'add link server[';
+    const { candidates } = complete(input, input.length, r, g);
+    expect(candidates.length).toBe(1);
+    expect(candidates[0].label).toMatch(/no server nodes/);
+    expect(candidates[0].value).toBe('server[');
+  });
+
+  it('emits a no-match sentinel when ids do not match the prefix', () => {
+    const r = buildRegistry();
+    const g = linkGraph();
+    // `port` exists (id 52682) but no id starts with `z`.
+    const input = 'add link port[z';
+    const { candidates } = complete(input, input.length, r, g);
+    expect(candidates.length).toBe(1);
+    expect(candidates[0].label).toMatch(/no port.*matches/);
+  });
+
+  it('applyCandidate finishes a typed-ref id without duplicating', () => {
+    const r = buildRegistry();
+    const g = linkGraph();
+    const input = 'add link customer[org';
+    const { candidates, replace } = complete(input, input.length, r, g);
+    const cand = candidates.find(
+      (c) => c.value === 'customer[organic-goat]',
+    );
+    expect(cand).toBeDefined();
+    const out = applyCandidate(input, cand!, replace);
+    expect(out.buffer).toBe('add link customer[organic-goat]');
+  });
+});
