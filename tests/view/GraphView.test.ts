@@ -184,3 +184,126 @@ describe('GraphView edge hover tooltip', () => {
     expect(wrapper.findAll('.tni-graph__edges > g')[0].classes()).toContain('hover');
   });
 });
+
+/**
+ * Shift-held tooltip contract: while Shift is physically down (keydown without
+ * keyup), no incidental pointer path should hide the tooltip entirely.
+ *
+ * Regression: moving from a pinned node tooltip toward the stack often crosses
+ * an edge hit path; `onEdgeEnter`/`onEdgeLeave` must not wipe the tooltip
+ * while Shift remains held.
+ */
+describe('GraphView tooltip while Shift held', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+  });
+
+  function mountGraphWithEdge() {
+    const fsm = useFsmStore();
+    fsm.dispatch({ type: 'loadDone' });
+    useGraphStore().parseText(
+      [
+        '!tni v1',
+        'server db01',
+        'networkaddress @10/0/0/1',
+        'networkaddress[@10/0/0/1] -> server[db01] :AssignedTo {note=primary}',
+      ].join('\n'),
+    );
+    return mount(GraphView, { attachTo: document.body });
+  }
+
+  it('keeps tooltip visible after edge leave when Shift is still held (keydown without keyup)', async () => {
+    const wrapper = mountGraphWithEdge();
+    await wrapper.vm.$nextTick();
+
+    const stack = () => wrapper.find('[data-tni-tooltip-stack]');
+    const node = wrapper.findAll('[data-sim-node]')[0]!;
+    const hit = wrapper.find('.tni-graph__edge-hit');
+
+    await node.trigger('mouseenter', { clientX: 5, clientY: 5 });
+    expect(stack().classes()).toContain('visible');
+
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'Shift',
+        shiftKey: true,
+        bubbles: true,
+      }),
+    );
+    await wrapper.vm.$nextTick();
+
+    await hit.trigger('mouseenter', { clientX: 10, clientY: 10 });
+    expect(stack().classes()).toContain('visible');
+
+    await hit.trigger('mouseleave');
+    await wrapper.vm.$nextTick();
+
+    // Shift still down + pinned node session → edge leave must not hide stack.
+    expect(stack().classes()).toContain('visible');
+  });
+
+  it('does not replace pinned node tooltip when entering another node while Shift is held', async () => {
+    const wrapper = mountGraphWithEdge();
+    await wrapper.vm.$nextTick();
+
+    const nodes = wrapper.findAll('[data-sim-node]');
+    expect(nodes.length).toBeGreaterThanOrEqual(2);
+
+    const head = () => wrapper.find('.tni-graph__tooltip--panel .tni-tip__head');
+    await nodes[0]!.trigger('mouseenter', { clientX: 1, clientY: 1 });
+    const labelAfterFirst = head().text();
+    expect(labelAfterFirst.length).toBeGreaterThan(0);
+
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'Shift',
+        shiftKey: true,
+        bubbles: true,
+      }),
+    );
+    await wrapper.vm.$nextTick();
+
+    await nodes[1]!.trigger('mouseenter', { clientX: 2, clientY: 2 });
+    await wrapper.vm.$nextTick();
+
+    expect(head().text()).toBe(labelAfterFirst);
+    expect(wrapper.find('[data-tni-tooltip-stack]').classes()).toContain('visible');
+  });
+
+  it('does not move tooltip stack position on graph mousemove after Shift pin', async () => {
+    const wrapper = mountGraphWithEdge();
+    await wrapper.vm.$nextTick();
+
+    const stack = wrapper.find('[data-tni-tooltip-stack]');
+    const nodes = wrapper.findAll('[data-sim-node]');
+    const hit = wrapper.find('.tni-graph__edge-hit');
+
+    await nodes[0]!.trigger('mouseenter', { clientX: 20, clientY: 20 });
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'Shift',
+        shiftKey: true,
+        bubbles: true,
+      }),
+    );
+    await wrapper.vm.$nextTick();
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    });
+
+    const el = stack.element as HTMLElement;
+    const left0 = el.style.left;
+    const top0 = el.style.top;
+    expect(left0.length).toBeGreaterThan(0);
+
+    await nodes[0]!.trigger('mousemove', { clientX: 400, clientY: 300 });
+    await wrapper.vm.$nextTick();
+    expect(el.style.left).toBe(left0);
+    expect(el.style.top).toBe(top0);
+
+    await hit.trigger('mousemove', { clientX: 111, clientY: 222 });
+    await wrapper.vm.$nextTick();
+    expect(el.style.left).toBe(left0);
+    expect(el.style.top).toBe(top0);
+  });
+});

@@ -109,6 +109,8 @@ const tooltipPos = ref({ x: 0, y: 0 });
 const tooltipVisible = ref(false);
 /** Pinned with Shift: fixed position + pointer hit on tooltip stack until dismiss. */
 const tooltipPinned = ref(false);
+/** Physical Shift chord (keydown/up); blocks tooltip dismiss while moving onto the stack. */
+const shiftPhysicallyHeld = ref(false);
 const tooltipStackRef = ref<HTMLDivElement | null>(null);
 const pointerOverGraphNode = ref(false);
 const lastPointerClient = ref({ x: 0, y: 0 });
@@ -319,9 +321,26 @@ function resetCollapsedTooltipInspect(): void {
   highlightCollapsedChildKey.value = null;
   linkAnchorEl.value = null;
   childLinkLines.value = [];
+  childTipOffset.value = { left: 0, top: 0 };
+}
+
+/** Shift + pinned node tooltip: ignore other graph hits (nodes/edges) until Shift is released. */
+function shiftInspectGraphHoverLocked(): boolean {
+  return (
+    shiftPhysicallyHeld.value &&
+    tooltipPinned.value &&
+    tooltipVisible.value
+  );
 }
 
 function onNodeEnter(key: NodeKey, ev: MouseEvent): void {
+  if (shiftInspectGraphHoverLocked()) {
+    if (hoverKey.value === key) {
+      pointerOverGraphNode.value = true;
+      lastPointerClient.value = { x: ev.clientX, y: ev.clientY };
+    }
+    return;
+  }
   hoverEdgeId.value = null;
   tooltipPinned.value = false;
   resetCollapsedTooltipInspect();
@@ -343,7 +362,7 @@ function onNodeMove(ev: MouseEvent): void {
 
 function onNodeLeave(): void {
   pointerOverGraphNode.value = false;
-  if (tooltipPinned.value) return;
+  if (shiftPhysicallyHeld.value || tooltipPinned.value) return;
   hoverKey.value = null;
   selection.setHover(null);
   hoverNeighbors.value = new Set();
@@ -352,6 +371,7 @@ function onNodeLeave(): void {
 }
 
 function onEdgeEnter(l: SimLink, ev: MouseEvent): void {
+  if (shiftInspectGraphHoverLocked()) return;
   // Node hover wins if already active (mouse jumped from node to edge
   // under a crowded layout); clear it so the edge owns the tooltip now.
   tooltipPinned.value = false;
@@ -367,17 +387,115 @@ function onEdgeEnter(l: SimLink, ev: MouseEvent): void {
 }
 
 function onEdgeMove(ev: MouseEvent): void {
-  if (tooltipVisible.value) positionTooltip(ev);
+  if (tooltipVisible.value && !tooltipPinned.value) positionTooltip(ev);
 }
 
 function onEdgeLeave(): void {
+  if (shiftInspectGraphHoverLocked()) return;
   hoverEdgeId.value = null;
   tooltipVisible.value = false;
 }
 
+const TOOLTIP_PAD = 6;
+
+/** Union of all `.tni-graph__tooltip` panels inside the stack, in root-local px. */
+function tooltipPanelsUnionInRoot(): {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+} | null {
+  const root = rootRef.value;
+  const stack = tooltipStackRef.value;
+  if (!root || !stack) return null;
+  const rr = root.getBoundingClientRect();
+  const tips = stack.querySelectorAll('.tni-graph__tooltip');
+  let minL = Infinity;
+  let minT = Infinity;
+  let maxR = -Infinity;
+  let maxB = -Infinity;
+  for (const el of tips) {
+    const r = (el as HTMLElement).getBoundingClientRect();
+    if (r.width < 1 && r.height < 1) continue;
+    minL = Math.min(minL, r.left);
+    minT = Math.min(minT, r.top);
+    maxR = Math.max(maxR, r.right);
+    maxB = Math.max(maxB, r.bottom);
+  }
+  if (!Number.isFinite(minL) || maxR < minL) return null;
+  return {
+    left: minL - rr.left,
+    top: minT - rr.top,
+    right: maxR - rr.left,
+    bottom: maxB - rr.top,
+  };
+}
+
+/** Slide the secondary panel up/down in root space only; does not move the main stack `top`. */
+function clampChildTooltipVerticalOnly(): void {
+  const root = rootRef.value;
+  const stack = tooltipStackRef.value;
+  if (!root || !stack) return;
+  const childEl = stack.querySelector('.tni-graph__tooltip--child') as HTMLElement | null;
+  if (!childEl) return;
+  const pad = TOOLTIP_PAD;
+  const rr = root.getBoundingClientRect();
+  const rh = root.clientHeight;
+  void childEl.offsetHeight;
+  const cr = childEl.getBoundingClientRect();
+  let delta = 0;
+  const maxBottom = rr.top + rh - pad;
+  if (cr.bottom > maxBottom) delta = maxBottom - cr.bottom;
+  const minTop = rr.top + pad;
+  if (cr.top + delta < minTop) delta += minTop - (cr.top + delta);
+  childTipOffset.value = {
+    left: childTipOffset.value.left,
+    top: childTipOffset.value.top + delta,
+  };
+}
+
+/**
+ * Keep stack in view: horizontal nudge moves `tooltipPos.x` only (whole stack).
+ * Vertical: if the child inspector is open, only `childTipOffset.top` changes so the
+ * main panel does not jump; otherwise nudge `tooltipPos.y` from the primary union.
+ */
+function nudgeTooltipLayout(): void {
+  const root = rootRef.value;
+  const stack = tooltipStackRef.value;
+  if (!root || !stack || !tooltipVisible.value) return;
+  const pad = TOOLTIP_PAD;
+  const rw = root.clientWidth;
+  const rh = root.clientHeight;
+  void stack.offsetHeight;
+
+  const union = tooltipPanelsUnionInRoot();
+  if (union) {
+    let x = tooltipPos.value.x;
+    if (union.right > rw - pad) x -= union.right - (rw - pad);
+    if (union.left < pad) x += pad - union.left;
+    tooltipPos.value = {
+      x: Math.max(0, x),
+      y: tooltipPos.value.y,
+    };
+  }
+
+  const childEl = stack.querySelector('.tni-graph__tooltip--child') as HTMLElement | null;
+  if (childEl) {
+    clampChildTooltipVerticalOnly();
+  } else if (union) {
+    let y = tooltipPos.value.y;
+    if (union.bottom > rh - pad) y -= union.bottom - (rh - pad);
+    if (union.top < pad) y += pad - union.top;
+    tooltipPos.value = {
+      x: tooltipPos.value.x,
+      y: Math.max(0, y),
+    };
+  }
+}
+
 function positionTooltipAtClient(clientX: number, clientY: number): void {
   if (!rootRef.value || !tooltipPanelRef.value) return;
-  const pad = 6;
+  const pad = TOOLTIP_PAD;
   const rect = rootRef.value.getBoundingClientRect();
   const tipRect = tooltipPanelRef.value.getBoundingClientRect();
   let x = clientX - rect.left + pad;
@@ -392,6 +510,7 @@ function positionTooltipAtClient(clientX: number, clientY: number): void {
 }
 
 function positionTooltip(ev: MouseEvent): void {
+  if (tooltipPinned.value) return;
   positionTooltipAtClient(ev.clientX, ev.clientY);
 }
 
@@ -447,13 +566,17 @@ function updateChildLinkLines(): void {
 function onWindowShiftPin(ev: KeyboardEvent): void {
   if (ev.key !== 'Shift' || ev.repeat) return;
   if (!pointerOverGraphNode.value || !hoverKey.value || !tooltipVisible.value) return;
-  if (hoverCollapsedChildren.value.length === 0) return;
   tooltipPinned.value = true;
   positionTooltipAtClient(
     lastPointerClient.value.x,
     lastPointerClient.value.y,
   );
-  void nextTick(() => updateChildLinkLines());
+  void nextTick(() => {
+    requestAnimationFrame(() => {
+      nudgeTooltipLayout();
+      updateChildLinkLines();
+    });
+  });
 }
 
 function dismissPinnedTooltip(): void {
@@ -478,6 +601,7 @@ function onWindowEscape(ev: KeyboardEvent): void {
 }
 
 function onTooltipStackPointerLeave(ev: PointerEvent): void {
+  if (shiftPhysicallyHeld.value) return;
   const rel = ev.relatedTarget as Node | null;
   if (rel && tooltipStackRef.value?.contains(rel)) return;
   if (rel && (rel as Element).closest?.('[data-sim-node]')) return;
@@ -507,29 +631,29 @@ function onCollapsedRowEnter(c: ModelNode, ev: MouseEvent): void {
     left: stack.offsetWidth + 6,
     top: rs.top - st.top,
   };
-  void nextTick(() => updateChildLinkLines());
+  void nextTick(() => {
+    requestAnimationFrame(() => {
+      nudgeTooltipLayout();
+      updateChildLinkLines();
+    });
+  });
 }
 
 function onCollapsedRowLeave(ev: MouseEvent): void {
   const rel = ev.relatedTarget as Node | null;
   if (rel && tooltipStackRef.value?.contains(rel)) return;
-  highlightCollapsedChildKey.value = null;
-  linkAnchorEl.value = null;
-  childLinkLines.value = [];
+  resetCollapsedTooltipInspect();
 }
 
 function onChildTooltipPointerLeave(ev: MouseEvent): void {
   const rel = ev.relatedTarget as Node | null;
   if (rel && tooltipStackRef.value?.contains(rel)) return;
-  highlightCollapsedChildKey.value = null;
-  linkAnchorEl.value = null;
-  childLinkLines.value = [];
+  resetCollapsedTooltipInspect();
 }
 
 watch(
   () => [
     tickRev.value,
-    highlightCollapsedChildKey.value,
     tooltipPos.value.x,
     tooltipPos.value.y,
     graphStore.revision,
@@ -652,7 +776,10 @@ const childLinkTargetKeys = computed(() => {
 });
 
 const tooltipStackInteractive = computed(
-  () => tooltipPinned.value || highlightCollapsedChildKey.value != null,
+  () =>
+    tooltipPinned.value ||
+    highlightCollapsedChildKey.value != null ||
+    shiftPhysicallyHeld.value,
 );
 
 function edgePropEntries(e: Edge): Array<[string, unknown]> {
@@ -694,13 +821,15 @@ function onNodeClick(key: NodeKey, ev: MouseEvent): void {
 }
 
 function onBackgroundClick(): void {
-  tooltipPinned.value = false;
-  resetCollapsedTooltipInspect();
-  hoverKey.value = null;
-  hoverEdgeId.value = null;
-  pointerOverGraphNode.value = false;
-  selection.setHover(null);
-  tooltipVisible.value = false;
+  if (!shiftPhysicallyHeld.value) {
+    tooltipPinned.value = false;
+    resetCollapsedTooltipInspect();
+    hoverKey.value = null;
+    hoverEdgeId.value = null;
+    pointerOverGraphNode.value = false;
+    selection.setHover(null);
+    tooltipVisible.value = false;
+  }
   selection.clear();
   fsmStore.dispatch({ type: 'clickBackground' });
 }
@@ -737,22 +866,43 @@ function onVisibility(): void {
   else if (!reducedMotion) layout.resume(0.1);
 }
 
-function onWindowTooltipKeys(ev: KeyboardEvent): void {
+function onWindowKeyDownForTooltip(ev: KeyboardEvent): void {
+  if (ev.key === 'Shift') shiftPhysicallyHeld.value = true;
   onWindowShiftPin(ev);
   onWindowEscape(ev);
+}
+
+function onWindowKeyUpForTooltip(ev: KeyboardEvent): void {
+  if (ev.key === 'Shift') shiftPhysicallyHeld.value = false;
+}
+
+function onWindowBlurClearShift(): void {
+  shiftPhysicallyHeld.value = false;
+}
+
+/** Keeps `shiftPhysicallyHeld` accurate when focus/key events are missed (e.g. over tooltip). */
+function onWindowPointerSyncShift(ev: PointerEvent): void {
+  if (!tooltipVisible.value) return;
+  shiftPhysicallyHeld.value = ev.shiftKey;
 }
 
 onMounted(async () => {
   await nextTick();
   initZoom();
   document.addEventListener('visibilitychange', onVisibility);
-  window.addEventListener('keydown', onWindowTooltipKeys);
+  window.addEventListener('keydown', onWindowKeyDownForTooltip);
+  window.addEventListener('keyup', onWindowKeyUpForTooltip);
+  window.addEventListener('blur', onWindowBlurClearShift);
+  window.addEventListener('pointermove', onWindowPointerSyncShift);
 });
 
 onBeforeUnmount(() => {
   cancelPointerDrag?.();
   document.removeEventListener('visibilitychange', onVisibility);
-  window.removeEventListener('keydown', onWindowTooltipKeys);
+  window.removeEventListener('keydown', onWindowKeyDownForTooltip);
+  window.removeEventListener('keyup', onWindowKeyUpForTooltip);
+  window.removeEventListener('blur', onWindowBlurClearShift);
+  window.removeEventListener('pointermove', onWindowPointerSyncShift);
   layout.destroy();
 });
 
