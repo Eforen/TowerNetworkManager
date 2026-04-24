@@ -84,7 +84,7 @@ Follows the pattern from the d3-force gallery (https://observablehq.com/@d3/forc
 - Line 3: tag chips
 - Lines 4+: key properties (network address, domain name, floor, rack, port count)
 - When data-layer collapse hides leaf nodes, an extra block lists those nodes (`type · id`, optional `name`) grouped under the hovered parent, with a link icon when that child has at least one neighbor still visible after presentation remap (e.g. a cable to a device when NIC ports are collapsed).
-- **Shift pin** (only when that block is present): `Shift` keydown while the pointer is still over the hovered graph node pins the stack; child row hover then drives connector lines and the child tooltip as above.
+- **Shift pin** (only when that block is present): `Shift` keydown while the pointer is still over the hovered graph node pins the stack; child row hover then drives connector lines and the child tooltip as above. Collapsed rows use a **fixed icon column** so type/id lines align whether or not the row has a link glyph. The child tooltip repeats the same head/name/tags/props block for the collapsed node, then a **horizontal rule with a centered pill** (`LINK` / `ALSO`) and the same block for each presentation target (first link → `LINK`, further targets → `ALSO`).
 - Footer: neighbor count
 
 Renders as an HTML stack (`[data-tni-tooltip-stack]`) following the pointer with a 6px offset, clamped to viewport, until pinned.

@@ -502,7 +502,7 @@ function onCollapsedRowEnter(c: ModelNode, ev: MouseEvent): void {
   const rs = row.getBoundingClientRect();
   const st = stack.getBoundingClientRect();
   highlightCollapsedChildKey.value = nodeKey(c.type, c.id);
-  linkAnchorEl.value = row.querySelector('.tni-tip__link-icon');
+  linkAnchorEl.value = row.querySelector('.tni-tip__collapsed-icon-cell');
   childTipOffset.value = {
     left: stack.offsetWidth + 6,
     top: rs.top - st.top,
@@ -599,6 +599,44 @@ const highlightCollapsedChildModel = computed<ModelNode | null>(() => {
   if (!k) return null;
   const p = parseNodeKey(k);
   return graphStore.graph.getNode(p.type as ModelNode['type'], p.id) ?? null;
+});
+
+/** Presentation targets for the highlighted collapsed child (full `Node` models). */
+const highlightCollapsedChildLinkTargets = computed<ModelNode[]>(() => {
+  const k = highlightCollapsedChildKey.value;
+  if (!k) return [];
+  const keys = collapsedChildPresentationTargets(
+    graphStore.graph,
+    dataLayers.value,
+    k,
+  );
+  const out: ModelNode[] = [];
+  for (const nk of keys) {
+    const p = parseNodeKey(nk);
+    const n = graphStore.graph.getNode(p.type as ModelNode['type'], p.id);
+    if (n) out.push(n);
+  }
+  return out;
+});
+
+/** Primary collapsed node, then each link target with a LINK / ALSO bridge label. */
+interface ChildTooltipSection {
+  node: ModelNode;
+  before?: 'LINK' | 'ALSO';
+}
+
+const childTooltipSections = computed<ChildTooltipSection[]>(() => {
+  const primary = highlightCollapsedChildModel.value;
+  if (!primary) return [];
+  const links = highlightCollapsedChildLinkTargets.value;
+  const out: ChildTooltipSection[] = [{ node: primary }];
+  for (let i = 0; i < links.length; i++) {
+    out.push({
+      node: links[i]!,
+      before: i === 0 ? 'LINK' : 'ALSO',
+    });
+  }
+  return out;
 });
 
 const childLinkTargetKeys = computed(() => {
@@ -1081,29 +1119,33 @@ defineExpose({ layout, simNodes, simLinks });
             @mouseenter="onCollapsedRowEnter(c, $event)"
             @mouseleave="onCollapsedRowLeave"
           >
-            <span
-              v-if="collapsedTargetsFor(c).length > 0"
-              class="tni-tip__link-icon"
-              aria-label="Linked in graph"
-              title="Linked in graph"
-            >
-              <svg class="tni-tip__link-svg" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-                <path
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.35"
-                  stroke-linecap="round"
-                  d="M6 9a3 3 0 0 1 0-4l1-1a3 3 0 0 1 4 4l-1 1M10 7a3 3 0 0 1 0 4l-1 1a3 3 0 0 1-4-4l1-1"
-                />
-              </svg>
+            <span class="tni-tip__collapsed-icon-cell">
+              <span
+                v-if="collapsedTargetsFor(c).length > 0"
+                class="tni-tip__link-icon"
+                aria-label="Linked in graph"
+                title="Linked in graph"
+              >
+                <svg class="tni-tip__link-svg" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+                  <path
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.35"
+                    stroke-linecap="round"
+                    d="M6 9a3 3 0 0 1 0-4l1-1a3 3 0 0 1 4 4l-1 1M10 7a3 3 0 0 1 0 4l-1 1a3 3 0 0 1-4-4l1-1"
+                  />
+                </svg>
+              </span>
             </span>
-            <span class="tni-tip__type">{{ c.type }}</span>
-            <span class="tni-tip__sep">·</span>
-            <span class="tni-tip__id">{{ c.id }}</span>
-            <span
-              v-if="c.properties['name']"
-              class="tni-tip__collapsed-name"
-            >{{ c.properties['name'] }}</span>
+            <div class="tni-tip__collapsed-main">
+              <span class="tni-tip__type">{{ c.type }}</span>
+              <span class="tni-tip__sep">·</span>
+              <span class="tni-tip__id">{{ c.id }}</span>
+              <span
+                v-if="c.properties['name']"
+                class="tni-tip__collapsed-name"
+              >{{ c.properties['name'] }}</span>
+            </div>
           </div>
           <div v-if="!tooltipPinned" class="tni-tip__collapsed-hint">
             Hold <kbd>Shift</kbd> to pin, then hover a row for link targets.
@@ -1161,40 +1203,52 @@ defineExpose({ layout, simNodes, simLinks });
         }"
         @pointerleave="onChildTooltipPointerLeave"
       >
-        <div class="tni-tip__head">
-          <span class="tni-tip__type">{{ highlightCollapsedChildModel.type }}</span>
-          <span class="tni-tip__sep">·</span>
-          <span class="tni-tip__id">{{ highlightCollapsedChildModel.id }}</span>
-        </div>
-        <div
-          v-if="highlightCollapsedChildModel.properties['name']"
-          class="tni-tip__name"
+        <template
+          v-for="(sec, secIdx) in childTooltipSections"
+          :key="`${secIdx}-${sec.node.type}:${sec.node.id}`"
         >
-          {{ highlightCollapsedChildModel.properties['name'] }}
-        </div>
-        <div
-          v-if="highlightCollapsedChildModel.tags.length > 0"
-          class="tni-tip__tags"
-        >
-          <span
-            v-for="t in highlightCollapsedChildModel.tags"
-            :key="t"
-            class="tni-tip__tag"
-          >{{ t }}</span>
-        </div>
-        <div
-          v-if="nodePropEntries(highlightCollapsedChildModel).length > 0"
-          class="tni-tip__props"
-        >
-          <div
-            v-for="[k, v] in nodePropEntries(highlightCollapsedChildModel)"
-            :key="k"
-            class="tni-tip__prop-row"
-          >
-            <span class="tni-tip__prop-k">{{ k }}</span>
-            <span class="tni-tip__prop-v">{{ v }}</span>
+          <div v-if="sec.before" class="tni-tip__bridge" role="presentation">
+            <span class="tni-tip__bridge-line" />
+            <span class="tni-tip__bridge-bubble">{{ sec.before }}</span>
+            <span class="tni-tip__bridge-line" />
           </div>
-        </div>
+          <div class="tni-tip__node-block">
+            <div class="tni-tip__head">
+              <span class="tni-tip__type">{{ sec.node.type }}</span>
+              <span class="tni-tip__sep">·</span>
+              <span class="tni-tip__id">{{ sec.node.id }}</span>
+            </div>
+            <div
+              v-if="sec.node.properties['name']"
+              class="tni-tip__name"
+            >
+              {{ sec.node.properties['name'] }}
+            </div>
+            <div
+              v-if="sec.node.tags.length > 0"
+              class="tni-tip__tags"
+            >
+              <span
+                v-for="t in sec.node.tags"
+                :key="t"
+                class="tni-tip__tag"
+              >{{ t }}</span>
+            </div>
+            <div
+              v-if="nodePropEntries(sec.node).length > 0"
+              class="tni-tip__props"
+            >
+              <div
+                v-for="[k, v] in nodePropEntries(sec.node)"
+                :key="k"
+                class="tni-tip__prop-row"
+              >
+                <span class="tni-tip__prop-k">{{ k }}</span>
+                <span class="tni-tip__prop-v">{{ v }}</span>
+              </div>
+            </div>
+          </div>
+        </template>
       </div>
     </div>
     <div class="tni-graph__hud">
@@ -1487,10 +1541,10 @@ defineExpose({ layout, simNodes, simLinks });
 }
 
 .tni-tip__collapsed-row {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: 1.35rem minmax(0, 1fr);
+  column-gap: 0.35rem;
   align-items: center;
-  gap: 0.15rem 0.35rem;
   padding: 0.2rem 0.3rem;
   margin: 0.1rem -0.3rem;
   border-radius: calc(var(--tni-radius) - 2px);
@@ -1499,6 +1553,22 @@ defineExpose({ layout, simNodes, simLinks });
 .tni-tip__collapsed-row--active {
   background: var(--tni-bg);
   outline: 1px solid var(--tni-accent);
+}
+
+.tni-tip__collapsed-icon-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.35rem;
+  justify-self: center;
+}
+
+.tni-tip__collapsed-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.15rem 0.35rem;
+  min-width: 0;
 }
 
 .tni-tip__link-icon {
@@ -1510,6 +1580,40 @@ defineExpose({ layout, simNodes, simLinks });
 
 .tni-tip__link-svg {
   display: block;
+}
+
+.tni-tip__bridge {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  width: 100%;
+  gap: 0.45rem;
+  margin: 0.55rem 0 0.35rem;
+}
+
+.tni-tip__bridge-line {
+  flex: 1 1 0;
+  min-width: 0.35rem;
+  height: 1px;
+  background: var(--tni-border);
+}
+
+.tni-tip__bridge-bubble {
+  flex-shrink: 0;
+  font-family: var(--tni-font-ui);
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  line-height: 1;
+  padding: 0.2rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid var(--tni-border);
+  background: var(--tni-bg);
+  color: var(--tni-accent);
+}
+
+.tni-tip__node-block {
+  min-width: 0;
 }
 
 .tni-tip__collapsed-hint {
