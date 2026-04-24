@@ -31,6 +31,7 @@ const simulation = d3.forceSimulation(nodes)
 ```
 
 - Link distance/strength derive from `edge.strength` in [graphdata.md](graphdata.md) (lower number = stronger = shorter link).
+- **`Owner` edges that touch a `userport`** use ~¼ the computed link distance and a higher link stiffness so user ports sit close to their owner (`customer` / `player`).
 - `floorY` keeps floor-assigned nodes stacked horizontally per floor when "Floor layout" toggle is on. `floorY(d) = d.floor * FLOOR_SPACING`.
 - `alphaDecay` bumped to `0.05` for snappier settling on edits.
 - Simulation is paused when document is hidden (`visibilitychange`).
@@ -53,13 +54,24 @@ const simulation = d3.forceSimulation(nodes)
 - Arrowheads on directed edges (Owner, Route, FloorAssignment, RackAssignment, Insight, Consumes, Provides, Install); undirected for cable links.
 - `Consumes` / `Provides` edges show the optional `required` or `amount` value as a small badge near the midpoint when set; when a `pool` is set, the badge is the pool name.
 
+## Data layers toolbar
+
+- **Placement**: top-left overlay on the graph (`position: absolute`), above the SVG, pointer-events enabled so it does not steal zoom from the canvas except on the controls themselves (wheel zoom is ignored over `[data-tni-toolbar]`).
+- **Primary control**: a **Data layers** toggle opens a **flyout column** immediately to its right: a vertical stack of layer buttons (floors, network addresses, user ports, NIC ports, and room for more types later).
+- **Floors**: toggle **visibility** of `floor` nodes. When off, `floor` nodes and every edge that touches a `floor` endpoint are omitted from the force simulation (no re-parenting).
+- **Network addresses**: when “collapsed”, `networkaddress` nodes are hidden and edges that referenced an address are **re-homed** to the node at the other end of that address’s `AssignedTo` edge (the current assignee).
+- **User ports**: when collapsed, `userport` nodes are hidden; edges are re-homed to the **`Owner`** (`customer` | `player`) for that user port.
+- **NIC ports**: when collapsed, layout-managed device `port` nodes (`parentId/portN`) are hidden; edges are re-homed to the owning **`server` | `switch` | `router`**; redundant `NIC` edges between a device and its own port are dropped after collapse.
+- **Collapsed children in tooltips**: when any of the three collapse modes above is on, hovering the **parent** node (assignee, owner, or device) lists the hidden `networkaddress` / `userport` / `port` rows under “Grouped here (data layers)” so addresses and ports stay discoverable without separate nodes on the canvas. Rows that still have **edges to other presentation nodes** (after collapse remap) show a **link** glyph. With the pointer still over the graph node, press **Shift** once to **pin** the tooltip (fixed position, tooltips accept pointer events). While pinned, hovering a collapsed row draws **dashed lines** in the SVG from that link icon to each linked **visible** node, highlights those nodes, and opens a **secondary tooltip** for the collapsed child stacked beside the parent. **Escape**, **click on the graph background**, or moving the pointer off the tooltip stack dismisses the pin and the child overlay (unless the pointer returns to a graph node with the tooltip still active).
+- **Persistence**: layer settings are JSON under **`tni.view.dataLayers`** in `localStorage` (same storage abstraction as other `tni.*` keys). Defaults keep floors visible and all collapse toggles off.
+
 ## Interactions
 
 - **Hover**: show tooltip; neighbors get `.hover-neighbor` class; non-neighbors dim to 30% opacity.
 - **Click**: select node, open `NodeInspectorOpen` state (see [statemachine.md](statemachine.md)).
 - **Shift+click**: add to multi-selection (for future group ops).
 - **Drag**: d3 drag sets `fx,fy` while held; on release `fx=fy=null` unless "Pin on drop" toggle is on.
-- **Pan/Zoom**: `d3.zoom()` on the root SVG, scale range `[0.1, 8]`. Labels fade in above scale `0.6`.
+- **Pan/Zoom**: `d3.zoom()` on the root SVG, scale range `[0.1, 8]`. Labels fade in above scale `0.6`. Wheel / drag zoom is ignored while the pointer is over `[data-tni-tooltip-stack]` so pinned tooltips stay usable.
 - **Double-click background**: reset zoom to fit.
 - **Keyboard** (when graph focused): arrow keys pan, `+`/`-` zoom, `f` fit, `g` toggle floor layout.
 
@@ -71,9 +83,11 @@ Follows the pattern from the d3-force gallery (https://observablehq.com/@d3/forc
 - Line 2: `name` (if set)
 - Line 3: tag chips
 - Lines 4+: key properties (network address, domain name, floor, rack, port count)
+- When data-layer collapse hides leaf nodes, an extra block lists those nodes (`type · id`, optional `name`) grouped under the hovered parent, with a link icon when that child has at least one neighbor still visible after presentation remap (e.g. a cable to a device when NIC ports are collapsed).
+- **Shift pin** (only when that block is present): `Shift` keydown while the pointer is still over the hovered graph node pins the stack; child row hover then drives connector lines and the child tooltip as above.
 - Footer: neighbor count
 
-Renders as an HTML `<div>` following the pointer with a 6px offset, clamped to viewport.
+Renders as an HTML stack (`[data-tni-tooltip-stack]`) following the pointer with a 6px offset, clamped to viewport, until pinned.
 
 ## Bottleneck overlay
 

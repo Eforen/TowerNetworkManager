@@ -73,7 +73,10 @@ export function parseInto(text: string, graph: Graph): void {
   // Track the most recent *entity* declaration so `->` / `=>` prefix lines
   // can reuse it as the implicit subject. Arrow lines, blank lines, edge
   // declarations, and comments do not update the anchor.
-  const ctx: ParseContext = { anchor: undefined };
+  const ctx: ParseContext = {
+    anchor: undefined,
+    ladderOutcomes: [],
+  };
 
   for (const line of lines) {
     const stripped = stripComments(line.text).trim();
@@ -85,6 +88,14 @@ export function parseInto(text: string, graph: Graph): void {
 
 interface ParseContext {
   anchor: { type: NodeType; id: string } | undefined;
+  /**
+   * Unified continuation ladder (like markdown heading depth).
+   * After depth-1 `->` / `=>`, `ladderOutcomes[0]` is that line's focus node
+   * (`->` target or `=>` created entity). After depth-D `--+>` / `==+>` (D≥2),
+   * `ladderOutcomes[D-1]` is the new target; deeper rungs are truncated.
+   * `-->` and `==>` (same D) read the same implicit `from` (`ladderOutcomes[0]`).
+   */
+  ladderOutcomes: { type: NodeType; id: string }[];
 }
 
 // ---------------------------------------------------------------------------
@@ -164,14 +175,22 @@ function parseStatement(
   // line that can reference such ids (e.g. edges) is processed.
   syncEphemeralDevicePorts(graph);
 
-  // Arrow-prefix continuation: `->` or `=>` at column 1 after trim.
-  if (text.startsWith('->') && !text.startsWith('->[')) {
-    parseArrowRefLine(text, srcLine, graph, ctx);
-    return;
-  }
-  if (text.startsWith('=>')) {
-    parseArrowEntityLine(text, srcLine, graph, ctx);
-    return;
+  // Prefix arrows: homogeneous `-…>` / `=…>` (must run before `includes('->')`
+  // so `-->` is not parsed as a full edge).
+  const prefixArrow = parseLeadingPrefixArrow(text);
+  if (prefixArrow) {
+    if (prefixArrow.symbol === '=' && prefixArrow.depth === 1) {
+      parseArrowEntityLine(text, srcLine, graph, ctx);
+      return;
+    }
+    if (prefixArrow.symbol === '-' && prefixArrow.depth === 1) {
+      parseArrowRefLine(text, srcLine, graph, ctx);
+      return;
+    }
+    if (prefixArrow.depth >= 2) {
+      parseLadderDepthArrowLine(prefixArrow, srcLine, graph, ctx);
+      return;
+    }
   }
   // Edge shape always contains `->`; entity never does.
   if (text.includes('->')) {
@@ -180,6 +199,7 @@ function parseStatement(
   }
   const created = parseEntity(text, srcLine, graph, ctx);
   ctx.anchor = created;
+  ctx.ladderOutcomes = [];
 }
 
 // ---------------------------------------------------------------------------
@@ -251,6 +271,22 @@ const PORT_MEDIA_ALIASES: Record<string, 'RJ45' | 'FiberOptic'> = {
   f: 'FiberOptic',
 };
 
+/** Uplink id allows uppercase (readWord only accepts lowercase-first slugs). */
+function readUplinkCode(cur: Cursor): string {
+  cur.skipSpaces();
+  const idRaw = cur.readAlnumWord();
+  if (!idRaw) {
+    throw new ParseError('expected an uplink id (4 letters)', cur.loc());
+  }
+  if (!UPLINK_ID_RE.test(idRaw)) {
+    throw new ParseError(
+      `invalid uplink id '${idRaw}' (expected 4 letters, e.g. mtvw)`,
+      cur.startLoc(),
+    );
+  }
+  return idRaw.toLowerCase();
+}
+
 /**
  * Customer endpoint: `userport <hardware> <MEDIA> [#Tag …] [k=v …]`.
  */
@@ -319,18 +355,7 @@ function parseUplinkEntity(
   graph: Graph,
   _ctx: ParseContext,
 ): { type: NodeType; id: string } {
-  cur.skipSpaces();
-  const idRaw = cur.readWord();
-  if (idRaw === undefined) {
-    throw new ParseError('expected an uplink id (4 letters)', cur.loc());
-  }
-  if (!UPLINK_ID_RE.test(idRaw)) {
-    throw new ParseError(
-      `invalid uplink id '${idRaw}' (expected 4 letters, e.g. mtvw)`,
-      cur.startLoc(),
-    );
-  }
-  const id = idRaw.toLowerCase();
+  const id = readUplinkCode(cur);
   cur.skipSpaces();
   const mediaWord = cur.readAlnumWord();
   if (!mediaWord) {
@@ -558,6 +583,46 @@ function parseEdge(text: string, srcLine: number, graph: Graph): void {
 // Arrow-prefix lines: `-> TypedRef ...` and `=> EntityDecl ...`
 // ---------------------------------------------------------------------------
 
+/** Homogeneous leading `-` or `=` run followed by `>` (prefix continuation). */
+function parseLeadingPrefixArrow(text: string): {
+  depth: number;
+  symbol: '-' | '=';
+  rest: string;
+} | null {
+  if (text.length < 2) return null;
+  const c0 = text[0]!;
+  if (c0 !== '-' && c0 !== '=') return null;
+  let i = 0;
+  while (i < text.length && text[i] === c0) i++;
+  if (text[i] !== '>') return null;
+  return { depth: i, symbol: c0 as '-' | '=', rest: text.slice(i + 1) };
+}
+
+/** Depth D≥2: same implicit `from` whether the line uses `-…>` or `=…>`. */
+function parseLadderDepthArrowLine(
+  la: { depth: number; symbol: '-' | '='; rest: string },
+  srcLine: number,
+  graph: Graph,
+  ctx: ParseContext,
+): void {
+  const depth = la.depth;
+  const needLen = depth - 1;
+  if (ctx.ladderOutcomes.length < needLen) {
+    const sample = `${la.symbol.repeat(depth)}>`;
+    throw new ParseError(
+      `${sample} needs a depth-${needLen} ladder outcome first (chain \`->\` / \`=>\` and shallower repeats before going deeper)`,
+      { line: srcLine, col: 1 },
+    );
+  }
+  const from = ctx.ladderOutcomes[depth - 2]!;
+  const cur = new Cursor(la.rest.trimStart(), srcLine);
+  const target = readTypedRef(cur, graph);
+  const { relation, properties } = readOptionalRelationAndProps(cur);
+  applyArrowEdge(graph, from, target, relation, properties, cur);
+  ctx.ladderOutcomes.length = depth - 1;
+  ctx.ladderOutcomes[depth - 1] = target;
+}
+
 function parseArrowRefLine(
   text: string,
   srcLine: number,
@@ -576,6 +641,7 @@ function parseArrowRefLine(
   const target = readTypedRef(cur, graph);
   const { relation, properties } = readOptionalRelationAndProps(cur);
   applyArrowEdge(graph, ctx.anchor, target, relation, properties, cur);
+  ctx.ladderOutcomes = [target];
 }
 
 function parseArrowEntityLine(
@@ -606,6 +672,7 @@ function parseArrowEntityLine(
   const trailCur = new Cursor(trailer, srcLine);
   const { relation, properties } = readOptionalRelationAndProps(trailCur);
   applyArrowEdge(graph, fromAnchor, created, relation, properties, cur);
+  ctx.ladderOutcomes = [created];
 }
 
 /**
@@ -836,14 +903,14 @@ function readQualifier(cur: Cursor, segType: NodeType): Qualifier {
   }
   // Heuristic: a bare run of digits followed by `]` is an index.
   // Anything else (letters, `@`, `"`) is a literal id.
-  const save = cur.pos;
+  const save = cur.getPos();
   const digits = cur.readDigits();
   if (digits !== undefined) {
     cur.skipSpaces();
     if (cur.peek() === ']') {
       return { kind: 'index', n: Number(digits) };
     }
-    cur.pos = save;
+    cur.setPos(save);
   }
   const id = readIdentity(cur, segType);
   return { kind: 'literal', id };
@@ -964,17 +1031,7 @@ function readIdentity(cur: Cursor, type: NodeType): string {
     );
   }
   if (type === 'uplink') {
-    const id = cur.readWord();
-    if (id === undefined) {
-      throw new ParseError('expected an uplink id', cur.loc());
-    }
-    if (!UPLINK_ID_RE.test(id)) {
-      throw new ParseError(
-        `invalid uplink id '${id}' (expected 4 letters, e.g. mtvw)`,
-        cur.startLoc(),
-      );
-    }
-    return id.toLowerCase();
+    return readUplinkCode(cur);
   }
   const id = cur.readWord();
   if (id === undefined) {

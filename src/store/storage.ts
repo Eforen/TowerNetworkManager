@@ -8,6 +8,7 @@
  *   tni.project.<slug>.undo -> optional undo snapshot (Phase 14)
  *   tni.cmdhistory         -> palette history (Phase 5)
  *   tni.filter.presets     -> filter presets (Phase 7)
+ *   tni.view.dataLayers    -> graph view layer toggles (Phase 6+)
  *
  * Quota guard: serialized size > 4 MB warns and refuses to write;
  * `QuotaExceededError` surfaces as `StorageError` so commands can fail
@@ -21,6 +22,7 @@ export const STORAGE_KEYS = {
   projects: 'tni.projects',
   cmdHistory: 'tni.cmdhistory',
   filterPresets: 'tni.filter.presets',
+  viewDataLayers: 'tni.view.dataLayers',
 } as const;
 
 export function projectKey(slug: string): string {

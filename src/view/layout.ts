@@ -26,7 +26,7 @@ import {
   type SimulationLinkDatum,
 } from 'd3-force';
 import type { Edge, Graph, Node, NodeKey } from '@/model';
-import { nodeKey } from '@/model';
+import { nodeKey, parseNodeKey } from '@/model';
 import { nodeRadius } from './visuals';
 
 export interface SimNode extends SimulationNodeDatum {
@@ -49,6 +49,14 @@ export interface SimLink extends SimulationLinkDatum<SimNode> {
 export type LayoutMode = 'force' | 'floor';
 
 export const FLOOR_SPACING = 120;
+
+function ownerEdgeTouchesUserport(edge: Edge): boolean {
+  if (edge.relation !== 'Owner') return false;
+  return (
+    parseNodeKey(edge.fromKey).type === 'userport' ||
+    parseNodeKey(edge.toKey).type === 'userport'
+  );
+}
 
 export interface LayoutOptions {
   /** Initial layout mode. */
@@ -73,12 +81,21 @@ export class GraphLayout {
           .id((d) => d.id)
           .distance((e) => {
             const s = e.model.strength;
-            const base = 40 + 20 * s;
+            let base = 40 + 20 * s;
             // Device ↔ layout port: keep the NIC arm visibly longer; ~2× base.
             if (e.model.relation === 'NIC') return base * 2;
+            // Customer/player ↔ userport: hug owner (~¼ nominal arm).
+            if (ownerEdgeTouchesUserport(e.model)) base *= 0.25;
             return base;
           })
-          .strength((e) => 1 / Math.max(e.model.strength, 0.5)),
+          .strength((e) => {
+            const s = e.model.strength;
+            let k = 1 / Math.max(s, 0.5);
+            if (ownerEdgeTouchesUserport(e.model)) {
+              k = Math.min(1, k * 4);
+            }
+            return k;
+          }),
       )
       // Weaker repulsion so the graph does not over-spread; pairs with longer NIC.
       .force('charge', forceManyBody<SimNode>().strength(-95))

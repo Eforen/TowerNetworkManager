@@ -6,7 +6,6 @@ import { useGraphStore, useFsmStore } from '@/store';
 import { simNodeForDrag } from '@/view/graphNodeDrag';
 import type { GraphLayout } from '@/view/layout';
 import type { SimNode } from '@/view/layout';
-import type { ComponentPublicInstance } from 'vue';
 
 /**
  * Component test for edge hover tooltip. happy-dom doesn't lay out SVG
@@ -32,10 +31,10 @@ function makeView() {
 
 type GraphExposed = { simNodes: unknown; layout: GraphLayout };
 
-function getSimNodes(wrapper: VueWrapper<ComponentPublicInstance<GraphExposed>>): SimNode[] {
+function getSimNodes(wrapper: VueWrapper): SimNode[] {
   // Prefer the simulation source of truth: exposed `simNodes` mirrors this but some
   // test utils unwrap refs inconsistently; `layout.nodes()` always matches the sim.
-  return (wrapper.vm as unknown as GraphExposed).layout.nodes();
+  return [...(wrapper.vm as unknown as GraphExposed).layout.nodes()];
 }
 
 describe('GraphView node drag binding', () => {
@@ -122,14 +121,14 @@ describe('GraphView edge hover tooltip', () => {
     const wrapper = makeView();
     await wrapper.vm.$nextTick();
 
-    const tooltip = wrapper.find('.tni-graph__tooltip');
-    expect(tooltip.classes()).not.toContain('visible');
+    const stack = wrapper.find('[data-tni-tooltip-stack]');
+    expect(stack.classes()).not.toContain('visible');
 
     const hit = wrapper.find('.tni-graph__edge-hit');
     await hit.trigger('mouseenter', { clientX: 10, clientY: 10 });
 
-    expect(tooltip.classes()).toContain('visible');
-    const text = tooltip.text();
+    expect(stack.classes()).toContain('visible');
+    const text = wrapper.find('.tni-graph__tooltip--panel').text();
     expect(text).toContain('AssignedTo');
     expect(text).toContain('networkaddress');
     expect(text).toContain('@10/0/0/1');
@@ -145,10 +144,10 @@ describe('GraphView edge hover tooltip', () => {
 
     const hit = wrapper.find('.tni-graph__edge-hit');
     await hit.trigger('mouseenter', { clientX: 10, clientY: 10 });
-    expect(wrapper.find('.tni-graph__tooltip').classes()).toContain('visible');
+    expect(wrapper.find('[data-tni-tooltip-stack]').classes()).toContain('visible');
 
     await hit.trigger('mouseleave');
-    expect(wrapper.find('.tni-graph__tooltip').classes()).not.toContain('visible');
+    expect(wrapper.find('[data-tni-tooltip-stack]').classes()).not.toContain('visible');
   });
 
   it('clears node hover when an edge takes focus', async () => {
@@ -159,7 +158,7 @@ describe('GraphView edge hover tooltip', () => {
     expect(nodeGroups.length).toBeGreaterThan(0);
     await nodeGroups[0].trigger('mouseenter', { clientX: 5, clientY: 5 });
     // Node tooltip shows its type label.
-    expect(wrapper.find('.tni-graph__tooltip').classes()).toContain('visible');
+    expect(wrapper.find('[data-tni-tooltip-stack]').classes()).toContain('visible');
 
     await wrapper.find('.tni-graph__edge-hit').trigger('mouseenter', {
       clientX: 10,
@@ -167,7 +166,7 @@ describe('GraphView edge hover tooltip', () => {
     });
 
     // Now the tooltip is the edge's — relation name must be present.
-    expect(wrapper.find('.tni-graph__tooltip').text()).toContain('AssignedTo');
+    expect(wrapper.find('.tni-graph__tooltip--panel').text()).toContain('AssignedTo');
   });
 
   it('applies hover class to the edge group under the cursor', async () => {

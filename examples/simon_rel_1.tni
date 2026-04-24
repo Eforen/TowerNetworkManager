@@ -1,56 +1,84 @@
 !tni v1
+
+# Building
 floor f0
 floor f1
 floor f2
-switch 8686 RJ45[5]
-# Infrastructure
-## Floor 0
-router 39915 RJ45[5] FIBER[5]
-###### Port4 is my debugger
-###### Port5 is default route
-###### Port6 is f1
-###### Port7 is f2
-server 55153 FIBER[3]
-## Floor 1
-## Floor 2
-uplink MTVW FIBER
-uplink HAAJ RJ45
-router 86110 FIBER[2] RJ45[2]
-=> networkaddress @f2/r/1
--> floor[f2] :FloorAssignment
-port[66110/port0] -> uplink[HAAJ] :NetworkCableLinkFiber
+
 
 # Customers
 ## Floor 1
 
 customer gripping-chipmunk
-=> userport 38118 RJ45
---> port[66110/port2] :NetworkCableLinkRJ45
+-> floor[f1] :FloorAssignment
 => networkaddress @f1/c/1
--> floor[f1] :FloorAssignment
+=> userport 38118 RJ45
 customer free-hyena
-=> userport 27146 RJ45
---> port[66110/port3] :NetworkCableLinkRJ45
+-> floor[f1] :FloorAssignment
 => networkaddress @f1/c/2
--> floor[f1] :FloorAssignment
+=> userport 27146 RJ45
 customer fast-dragonfly
-=> userport 64655 RJ45
---> port[66110/port4] :NetworkCableLinkRJ45
-=> networkaddress @f1/c/3
 -> floor[f1] :FloorAssignment
+=> networkaddress @f1/c/3
+=> userport 64655 RJ45
 
 ## Floor 2
 customer same-millipede
-=> userport 37295 RJ45
-=> networkaddress @f2/p/1
 -> floor[f2] :FloorAssignment
+=> networkaddress @f2/p/1
+=> userport 37295 RJ45
 
 customer sparkling-stingray
-=> userport 8566 RJ45
-=> networkaddress @f2/c/1
 -> floor[f2] :FloorAssignment
+=> networkaddress @f2/c/1
+=> userport 8566 RJ45
 
 customer muddy-chihuahua
-=> userport 86909 RJ45
-=> networkaddress @f2/c/2
 -> floor[f2] :FloorAssignment
+=> networkaddress @f2/c/2
+=> userport 86909 RJ45
+
+
+# Infrastructure
+## Floor 0
+router 39915 RJ45[5] FIBER[5]
+uplink DPUW FIBER
+-> floor[f0] :FloorAssignment
+-> port[39915/port6] :NetworkCableLinkFiber
+uplink BCGO FIBER
+-> floor[f0] :FloorAssignment
+-> port[39915/port7] :NetworkCableLinkFiber
+server 55153 FIBER[3]
+port[55153/port0] -> port[39915/port5] :NetworkCableLinkRJ45
+
+## Floor 1
+uplink HYHH FIBER
+-> floor[f1] :FloorAssignment
+-> uplink[DPUW] :UplinkConnection
+
+router 26564 FIBER[2] RJ45[3]
+=> networkaddress @f1/r/1
+-> floor[f1] :FloorAssignment
+port[26564/port0] -> uplink[HYHH] :NetworkCableLinkFiber
+port[26564/port2] -> customer[gripping-chipmunk]>userport :NetworkCableLinkRJ45
+port[26564/port3] -> customer[free-hyena]>userport :NetworkCableLinkRJ45
+port[26564/port4] -> customer[fast-dragonfly]>userport :NetworkCableLinkRJ45
+
+## Floor 2
+uplink MTVW FIBER
+-> floor[f2] :FloorAssignment
+-> uplink[BCGO] :UplinkConnection
+uplink HAAJ RJ45
+-> floor[f2] :FloorAssignment
+router 86110 FIBER[2] RJ45[3]
+port[86110/port0] -> uplink[MTVW] :NetworkCableLinkFiber
+port[86110/port2] -> customer[same-millipede]>userport :NetworkCableLinkRJ45
+port[86110/port3] -> customer[sparkling-stingray]>userport :NetworkCableLinkRJ45
+port[86110/port4] -> customer[muddy-chihuahua]>userport :NetworkCableLinkRJ45
+=> networkaddress @f2/r/1
+-> floor[f2] :FloorAssignment
+port[86110/port0] -> uplink[HAAJ] :NetworkCableLinkFiber
+switch 8686 RJ45[5]
+=> networkaddress @f2/sw/1
+-> floor[f2] :FloorAssignment
+port[86110/port4] -> port[8686/port0] :NetworkCableLinkRJ45

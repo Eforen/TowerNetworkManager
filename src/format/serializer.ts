@@ -28,7 +28,6 @@ import {
   HARDWARE_ADDR_RE,
   NET_ADDR_RE,
   NODE_ID_RE,
-  PORT_SLUG_RE,
   RELATION_META,
   isDeviceLayoutManagedPort,
   isImplicitLayoutNicEdge,
@@ -120,7 +119,7 @@ export function serialize(graph: Graph): string {
 // Nodes
 // ---------------------------------------------------------------------------
 
-function serializeNode(node: Node, graph: Graph): string {
+function serializeNode(node: Node, _graph: Graph): string {
   if (node.type === 'port') return serializePortNode(node);
   if (node.type === 'userport') return serializeUserportNode(node);
   if (node.type === 'uplink') return serializeUplinkNode(node);

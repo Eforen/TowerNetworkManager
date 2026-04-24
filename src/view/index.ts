@@ -13,3 +13,14 @@ export {
   edgeWidth,
 } from './visuals';
 export type { NodeShape, FillFamily, NodeVisual, EdgeVisual, EdgeDashStyle } from './visuals';
+export {
+  buildPresentationGraph,
+  collapsedChildPresentationTargets,
+  collapsedChildrenForParent,
+  getPresentationCollapseState,
+  parseDataLayersJson,
+  DEFAULT_DATA_LAYERS,
+  DATA_LAYERS_STORAGE_KEY,
+} from './presentationGraph';
+export type { PresentationCollapseState } from './presentationGraph';
+export type { DataLayersSettings } from './presentationGraph';

@@ -206,6 +206,12 @@ describe('format/parser – port syntax', () => {
     expect(graph.getNode('port', '52682')).toBeUndefined();
   });
 
+  it('accepts uplink id with uppercase letters (stored lowercase)', () => {
+    const { graph } = parse('!tni v1\nuplink MTVW FIBER\n');
+    expect(graph.getNode('uplink', 'mtvw')).toBeDefined();
+    expect(graph.getNode('uplink', 'MTVW')).toBeUndefined();
+  });
+
   it('rejects range syntax on userport lines', () => {
     expect(() => parse('!tni v1\nuserport 0-2 RJ45\n')).toThrow(ParseError);
   });
@@ -420,6 +426,94 @@ describe('format/parser – arrow-prefix continuation (`->` / `=>`)', () => {
         ].join('\n'),
       ),
     ).toThrow(/ambiguous/);
+  });
+
+  it('`-->` and `==>` share the same ladder rung (depth-2 `from` after `=>`)', () => {
+    const a = parse(
+      [
+        '!tni v1',
+        'server s1 RJ45[2]',
+        'customer c',
+        '=> userport 1 RJ45 :Owner',
+        '--> port[s1/port0] :NetworkCableLinkRJ45',
+      ].join('\n'),
+    );
+    const b = parse(
+      [
+        '!tni v1',
+        'server s1 RJ45[2]',
+        'customer c',
+        '=> userport 1 RJ45 :Owner',
+        '==> port[s1/port0] :NetworkCableLinkRJ45',
+      ].join('\n'),
+    );
+    for (const { graph } of [a, b]) {
+      const cable = [...graph.edges.values()].filter(
+        (e) => e.relation === 'NetworkCableLinkRJ45',
+      );
+      expect(cable).toHaveLength(1);
+      expect(from(cable[0]!)).toEqual({ type: 'userport', id: '1' });
+      expect(to(cable[0]!)).toEqual({ type: 'port', id: 's1/port0' });
+    }
+  });
+
+  it('`--->` uses the outcome of the previous `-->` (same as `===>`)', () => {
+    const { graph } = parse(
+      [
+        '!tni v1',
+        'server s1 RJ45[2]',
+        'userport 2 RJ45',
+        'customer c',
+        '=> userport 1 RJ45 :Owner',
+        '--> port[s1/port0] :NetworkCableLinkRJ45',
+        '===> userport[2] :NetworkCableLinkRJ45',
+      ].join('\n'),
+    );
+    const cables = [...graph.edges.values()].filter(
+      (e) => e.relation === 'NetworkCableLinkRJ45',
+    );
+    expect(cables).toHaveLength(2);
+    const deep = cables.find((e) => from(e).id === 's1/port0');
+    expect(deep).toBeDefined();
+    expect(to(deep!)).toEqual({ type: 'userport', id: '2' });
+  });
+
+  it('errors on `-->` when no depth-1 ladder outcome exists', () => {
+    expect(() =>
+      parse(['!tni v1', 'customer c', '--> port[s1/port0] :NIC'].join('\n')),
+    ).toThrow(/ladder outcome/);
+  });
+
+  it('clears the ladder on a new entity line', () => {
+    expect(() =>
+      parse(
+        [
+          '!tni v1',
+          'server s1 RJ45[1]',
+          'customer c1',
+          '=> userport 1 RJ45 :Owner',
+          'customer c2',
+          '--> port[s1/port0] :NetworkCableLinkRJ45',
+        ].join('\n'),
+      ),
+    ).toThrow(/ladder outcome/);
+  });
+
+  it('`-->` after `->` uses the `->` target as implicit `from`', () => {
+    const { graph } = parse(
+      [
+        '!tni v1',
+        'switch sw1 RJ45[2]',
+        '-> port[sw1/port0] :NIC',
+        '--> port[sw1/port1] :NetworkCableLinkRJ45',
+      ].join('\n'),
+    );
+    const cable = [...graph.edges.values()].find(
+      (e) => e.relation === 'NetworkCableLinkRJ45',
+    );
+    expect(cable).toBeDefined();
+    expect(from(cable!)).toEqual({ type: 'port', id: 'sw1/port0' });
+    expect(to(cable!)).toEqual({ type: 'port', id: 'sw1/port1' });
   });
 });
 

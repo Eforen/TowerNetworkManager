@@ -130,23 +130,44 @@ server[db01] -> port[db01/port1] :NIC
 rtable[r1-rt] -> rtable[r2-rt] :Route {target=@f2/c/1}
 ```
 
-## Implicit-subject continuation lines (`->` / `=>`)
+## Implicit-subject continuation (`->`, `=>`, and deeper arrows)
 
-Authoring shortcut for chaining edges off a shared subject without repeating it:
+Authoring shortcut for chaining edges without repeating typed refs. Lines start with a **homogeneous** run of `-` or `=` characters, immediately followed by `>` (like markdown heading depth, but with `-` / `=` instead of `#`).
+
+### Anchor
+
+The **anchor** is the most recent *entity declaration* line (a normal `<type> …` line). Only that line updates the anchor. Arrow-prefix lines, blank lines, full-form edges, and comments do **not** change the anchor.
+
+### Depth 1
 
 ```
 -> <TypedRef> [:RelationName] [{key=value, ...}]
 => <EntityDecl>  [:RelationName] [{key=value, ...}]
 ```
 
-- The **anchor** is the most recent *entity declaration* line. Arrow lines (lines that begin with `->` or `=>`), blank lines, full-form edge declarations (`typeA[id] -> typeB[id]`), and comment-only lines do NOT change the anchor.
-- `->` creates an edge `anchor -> <TypedRef>`. The target must already exist (either earlier in the file or elsewhere in the project when parsing fragments).
-- `=>` creates the entity on the right-hand side *and* an edge between the anchor and the new entity. Entity declaration syntax is identical to a normal entity line (e.g. `=> userport 38118 RJ45 :Owner`, `=> port "sw1/port0" RJ45 :NIC`).
-- **Direction resolution.** Parsers try `(anchor, new)` first, then `(new, anchor)`; the order that matches a legal pair for the chosen relation wins. If the relation is omitted, inference runs the same way and must yield exactly one legal pair.
-- It is an error if:
-  - No prior entity declaration exists (no anchor).
-  - The resulting direction has zero or >1 legal relations.
-  - An `->` line targets an entity that does not exist yet.
+- **`->`** (one `-`, then `>`): edge **anchor →** existing `<TypedRef>`. Records a **ladder** outcome at depth 1 equal to that edge’s **target** node (so the next depth-2 line can start from it).
+- **`=>`** (one `=`, then `>`): parse `<EntityDecl>` as on a normal line, create the node, then edge **anchor →** created node. Records depth 1 equal to the **created** node.
+
+The target of `->` must already exist. **Direction resolution** for `->` / `=>` (and deeper arrows): try `(from, to)` first, then flip when the relation only allows the opposite order; if the relation is omitted, inference must find exactly one legal relation.
+
+### Unified ladder (depth ≥ 2)
+
+For **D ≥ 2**, the prefix is **D** copies of the same character (`-` or `=`), then `>`, then a typed ref (same shape as `->`, no inline entity create):
+
+```
+--> <TypedRef> [:RelationName] [{key=value, ...}]
+==> <TypedRef> [:RelationName] [{key=value, ...}]
+```
+
+- **Same depth, same rung:** `-->` and `==>` both use the **same** implicit **from** node: the depth **D−1** outcome currently stored on the ladder (after depth 1, that is the last `->` target or `=>` created node).
+- **Deeper depth, next rung:** `--->` / `===>` etc. use the outcome of the previous depth **D−1** line as **from** (for example, `--->` uses the target of the most recent `-->` / `==>` on the same ladder).
+
+After a successful depth-**D** arrow, the parser keeps ladder outcomes through rung **D** (the new edge’s target becomes rung **D**); any prior outcomes at depths **> D** are dropped.
+
+- It is an error if depth **D** is used but no outcome exists yet at depth **D−1** (for example, `-->` before any `->` / `=>` in the same block).
+- A **normal entity line** clears the ladder (it does not clear the anchor logic above; it sets a new anchor and resets continuation outcomes). Put supporting entities **above** a multi-depth arrow sequence if they are needed as edge endpoints later in the chain, or use a full-form `type[id] -> type[id]` edge.
+
+**Dispatch note:** lines such as `-->` contain the substring `->`; parsers must classify **prefix** arrows (leading `-…>` / `=…>`) before treating the line as a full `EdgeDecl`.
 
 Example (equivalent forms):
 
@@ -201,10 +222,12 @@ Comment       = "#" { AnyCharButNL } NL .
 EntityDecl    = Type Identity { Tag } { Prop } NL .
 EdgeDecl      = TypedRef "->" TypedRef [ ":" RelationName ]
                 [ "{" PropList "}" ] NL .
-ArrowLine     = ArrowRef | ArrowEntity .
+ArrowLine     = ArrowRef | ArrowEntity | ArrowDeep .
 ArrowRef      = "->" TypedRef [ ":" RelationName ]
                 [ "{" PropList "}" ] NL .
 ArrowEntity   = "=>" EntityDecl .
+ArrowDeep     = ("-" { "-" } | "=" { "=" }) ">" TypedRef [ ":" RelationName ]
+                [ "{" PropList "}" ] NL .
 TypedRef      = (Type "[" Identity "]" | TypedRef ">" Selector) .
 Selector      = Type [ "[" (Integer | "#" Identity | Identity) "]" ] .
 Type          = "player" | "port" | "userport" | "switch" | "router" | "server"
@@ -253,6 +276,7 @@ A parser implementation MUST accept any valid form; a serializer MUST emit only 
 - The project index is stored under key `tni.projects` as JSON: `{ slugs: string[]; active: string }`.
 - Palette history under `tni.cmdhistory` (see [commandline.md](commandline.md)).
 - Filter presets under `tni.filter.presets` as JSON `Record<name, FilterState>` (sets serialized as arrays).
+- Graph **data layer** toggles (see [visualization.md](visualization.md) §Data layers toolbar) under `tni.view.dataLayers` as JSON.
 - Optional undo snapshot under `tni.project.<slug>.undo` (see [commands.md](commands.md)).
 - Storage quota check: before save, compute serialized size; if > 4 MB, warn and prompt to export instead.
 - Storage writes use try/catch around `localStorage.setItem`; on `QuotaExceededError`, the command returns an error and leaves state unchanged.

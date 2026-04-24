@@ -25,8 +25,10 @@ import {
   shallowRef,
   watch,
 } from 'vue';
+import { STORAGE_KEYS, defaultStorage } from '@/store/storage';
 import { pointer, select } from 'd3-selection';
 import { zoom, zoomIdentity, type D3ZoomEvent, type ZoomBehavior } from 'd3-zoom';
+import { nodeKey } from '@/model';
 import type { Edge, EdgeId, Node as ModelNode, NodeKey } from '@/model';
 import {
   useFsmStore,
@@ -44,6 +46,14 @@ import {
   EDGE_VISUALS,
 } from './visuals';
 import { GraphLayout, type SimLink, type SimNode } from './layout';
+import {
+  buildPresentationGraph,
+  collapsedChildPresentationTargets,
+  collapsedChildrenForParent,
+  DEFAULT_DATA_LAYERS,
+  parseDataLayersJson,
+  type DataLayersSettings,
+} from './presentationGraph';
 
 const graphStore = useGraphStore();
 const fsmStore = useFsmStore();
@@ -53,7 +63,8 @@ const rootRef = ref<HTMLDivElement | null>(null);
 const svgRef = ref<SVGSVGElement | null>(null);
 /** Pan/zoom layer; d3.pointer(..., el) must use this so coords match `n.x`/`n.y`. */
 const viewportRef = ref<SVGGElement | null>(null);
-const tooltipRef = ref<HTMLDivElement | null>(null);
+/** Primary panel (node or edge) — used to clamp tooltip position. */
+const tooltipPanelRef = ref<HTMLDivElement | null>(null);
 
 const layoutMode = ref<'force' | 'floor'>('force');
 const zoomLevel = ref(1);
@@ -66,11 +77,47 @@ const simNodes = shallowRef<SimNode[]>([]);
 const simLinks = shallowRef<SimLink[]>([]);
 const tickRev = ref(0);
 
+const dataLayers = ref<DataLayersSettings>(loadDataLayers());
+const dataLayersMenuOpen = ref(false);
+
+function loadDataLayers(): DataLayersSettings {
+  try {
+    return parseDataLayersJson(
+      defaultStorage().getItem(STORAGE_KEYS.viewDataLayers),
+    );
+  } catch {
+    return { ...DEFAULT_DATA_LAYERS };
+  }
+}
+
+function persistDataLayers(v: DataLayersSettings): void {
+  try {
+    defaultStorage().setItem(STORAGE_KEYS.viewDataLayers, JSON.stringify(v));
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
+function toggleDataLayer<K extends keyof DataLayersSettings>(key: K): void {
+  dataLayers.value = { ...dataLayers.value, [key]: !dataLayers.value[key] };
+}
+
 const hoverKey = ref<NodeKey | null>(null);
 const hoverEdgeId = ref<EdgeId | null>(null);
 const hoverNeighbors = ref<Set<NodeKey>>(new Set());
 const tooltipPos = ref({ x: 0, y: 0 });
 const tooltipVisible = ref(false);
+/** Pinned with Shift: fixed position + pointer hit on tooltip stack until dismiss. */
+const tooltipPinned = ref(false);
+const tooltipStackRef = ref<HTMLDivElement | null>(null);
+const pointerOverGraphNode = ref(false);
+const lastPointerClient = ref({ x: 0, y: 0 });
+const highlightCollapsedChildKey = ref<NodeKey | null>(null);
+const linkAnchorEl = ref<HTMLElement | null>(null);
+const childLinkLines = shallowRef<
+  Array<{ x1: number; y1: number; x2: number; y2: number }>
+>([]);
+const childTipOffset = ref({ left: 0, top: 0 });
 
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -92,7 +139,9 @@ layout.sim.on('tick', () => {
 });
 
 function rebuild(): void {
-  layout.setGraph(graphStore.graph);
+  layout.setGraph(
+    buildPresentationGraph(graphStore.graph, dataLayers.value),
+  );
   simNodes.value = [...layout.nodes()];
   simLinks.value = [...layout.links()];
   tickRev.value++;
@@ -105,7 +154,16 @@ function rebuild(): void {
 watch(
   () => graphStore.revision,
   () => rebuild(),
-  { immediate: false },
+  { immediate: true },
+);
+
+watch(
+  dataLayers,
+  (v) => {
+    persistDataLayers(v);
+    rebuild();
+  },
+  { deep: true },
 );
 
 watch(layoutMode, (m) => layout.setMode(m));
@@ -121,7 +179,11 @@ function initZoom(): void {
     .filter((event: Event) => {
       // Skip zoom/drag when user clicks a node (drag handler owns it).
       const t = event.target as Element | null;
-      return !t || !t.closest('[data-sim-node]');
+      return (
+        (!t || !t.closest('[data-sim-node]')) &&
+        (!t || !t.closest('[data-tni-toolbar]')) &&
+        (!t || !t.closest('[data-tni-tooltip-stack]'))
+      );
     })
     .on('zoom', (event: D3ZoomEvent<SVGSVGElement, unknown>) => {
       zoomLevel.value = event.transform.k;
@@ -163,7 +225,8 @@ function fit(): void {
 }
 
 function onDoubleClickBackground(ev: MouseEvent): void {
-  if ((ev.target as Element).closest('[data-sim-node]')) return;
+  const t = ev.target as Element;
+  if (t.closest('[data-sim-node]') || t.closest('[data-tni-toolbar]')) return;
   ev.preventDefault();
   fit();
 }
@@ -177,6 +240,7 @@ function onNodePointerDown(key: NodeKey, ev: PointerEvent): void {
   const container = viewportRef.value;
   const node = layout.nodes().find((n) => n.id === key);
   if (!container || !node) return;
+  const simNode = node;
 
   ev.stopPropagation();
 
@@ -186,18 +250,18 @@ function onNodePointerDown(key: NodeKey, ev: PointerEvent): void {
   if (!reducedMotion) layout.sim.alphaTarget(0.2).restart();
 
   const [px0, py0] = pointer(ev, container);
-  const nx = node.x ?? 0;
-  const ny = node.y ?? 0;
+  const nx = simNode.x ?? 0;
+  const ny = simNode.y ?? 0;
   const ox = px0 - nx;
   const oy = py0 - ny;
 
   function applyWorld(wx: number, wy: number): void {
     const x = wx - ox;
     const y = wy - oy;
-    node.fx = x;
-    node.fy = y;
-    node.x = x;
-    node.y = y;
+    simNode.fx = x;
+    simNode.fy = y;
+    simNode.x = x;
+    simNode.y = y;
     tickRev.value++;
   }
 
@@ -217,8 +281,8 @@ function onNodePointerDown(key: NodeKey, ev: PointerEvent): void {
     cancelPointerDrag = null;
 
     layout.sim.alphaTarget(0);
-    node.fx = null;
-    node.fy = null;
+    simNode.fx = null;
+    simNode.fy = null;
     tickRev.value++;
 
     if (movedDuringDrag) {
@@ -236,8 +300,8 @@ function onNodePointerDown(key: NodeKey, ev: PointerEvent): void {
     window.removeEventListener('pointercancel', end);
     cancelPointerDrag = null;
     layout.sim.alphaTarget(0);
-    node.fx = null;
-    node.fy = null;
+    simNode.fx = null;
+    simNode.fy = null;
     tickRev.value++;
     suppressNodeClick.value = false;
   };
@@ -251,34 +315,54 @@ function onNodePointerDown(key: NodeKey, ev: PointerEvent): void {
 // Hover + tooltip
 // ---------------------------------------------------------------------
 
+function resetCollapsedTooltipInspect(): void {
+  highlightCollapsedChildKey.value = null;
+  linkAnchorEl.value = null;
+  childLinkLines.value = [];
+}
+
 function onNodeEnter(key: NodeKey, ev: MouseEvent): void {
   hoverEdgeId.value = null;
+  tooltipPinned.value = false;
+  resetCollapsedTooltipInspect();
   hoverKey.value = key;
+  pointerOverGraphNode.value = true;
   selection.setHover(key);
   hoverNeighbors.value = computeNeighbors(key);
   tooltipVisible.value = true;
+  lastPointerClient.value = { x: ev.clientX, y: ev.clientY };
   positionTooltip(ev);
 }
 
 function onNodeMove(ev: MouseEvent): void {
-  if (tooltipVisible.value) positionTooltip(ev);
+  lastPointerClient.value = { x: ev.clientX, y: ev.clientY };
+  if (tooltipVisible.value && !tooltipPinned.value) {
+    positionTooltip(ev);
+  }
 }
 
 function onNodeLeave(): void {
+  pointerOverGraphNode.value = false;
+  if (tooltipPinned.value) return;
   hoverKey.value = null;
   selection.setHover(null);
   hoverNeighbors.value = new Set();
+  resetCollapsedTooltipInspect();
   tooltipVisible.value = false;
 }
 
 function onEdgeEnter(l: SimLink, ev: MouseEvent): void {
   // Node hover wins if already active (mouse jumped from node to edge
   // under a crowded layout); clear it so the edge owns the tooltip now.
+  tooltipPinned.value = false;
+  resetCollapsedTooltipInspect();
   hoverKey.value = null;
+  pointerOverGraphNode.value = false;
   selection.setHover(null);
   hoverNeighbors.value = new Set();
   hoverEdgeId.value = l.model.id;
   tooltipVisible.value = true;
+  lastPointerClient.value = { x: ev.clientX, y: ev.clientY };
   positionTooltip(ev);
 }
 
@@ -291,17 +375,171 @@ function onEdgeLeave(): void {
   tooltipVisible.value = false;
 }
 
-function positionTooltip(ev: MouseEvent): void {
-  if (!rootRef.value || !tooltipRef.value) return;
+function positionTooltipAtClient(clientX: number, clientY: number): void {
+  if (!rootRef.value || !tooltipPanelRef.value) return;
   const pad = 6;
   const rect = rootRef.value.getBoundingClientRect();
-  const tipRect = tooltipRef.value.getBoundingClientRect();
-  let x = ev.clientX - rect.left + pad;
-  let y = ev.clientY - rect.top + pad;
-  if (x + tipRect.width > rect.width) x = ev.clientX - rect.left - tipRect.width - pad;
-  if (y + tipRect.height > rect.height) y = ev.clientY - rect.top - tipRect.height - pad;
+  const tipRect = tooltipPanelRef.value.getBoundingClientRect();
+  let x = clientX - rect.left + pad;
+  let y = clientY - rect.top + pad;
+  if (x + tipRect.width > rect.width) {
+    x = clientX - rect.left - tipRect.width - pad;
+  }
+  if (y + tipRect.height > rect.height) {
+    y = clientY - rect.top - tipRect.height - pad;
+  }
   tooltipPos.value = { x: Math.max(0, x), y: Math.max(0, y) };
 }
+
+function positionTooltip(ev: MouseEvent): void {
+  positionTooltipAtClient(ev.clientX, ev.clientY);
+}
+
+function clientToViewportLocal(
+  clientX: number,
+  clientY: number,
+): { x: number; y: number } | null {
+  const svg = svgRef.value;
+  const g = viewportRef.value;
+  if (!svg || !g) return null;
+  const ctm = g.getScreenCTM();
+  if (!ctm) return null;
+  const p = new DOMPoint(clientX, clientY);
+  const loc = p.matrixTransform(ctm.inverse());
+  return { x: loc.x, y: loc.y };
+}
+
+function updateChildLinkLines(): void {
+  void tickRev.value;
+  const childK = highlightCollapsedChildKey.value;
+  const anchor = linkAnchorEl.value;
+  if (!childK || !anchor || !svgRef.value || !viewportRef.value) {
+    childLinkLines.value = [];
+    return;
+  }
+  const rect = anchor.getBoundingClientRect();
+  const sx = rect.left + rect.width / 2;
+  const sy = rect.top + rect.height / 2;
+  const start = clientToViewportLocal(sx, sy);
+  if (!start) {
+    childLinkLines.value = [];
+    return;
+  }
+  const targets = collapsedChildPresentationTargets(
+    graphStore.graph,
+    dataLayers.value,
+    childK,
+  );
+  const lines: Array<{ x1: number; y1: number; x2: number; y2: number }> = [];
+  for (const tk of targets) {
+    const sn = simNodes.value.find((s) => s.id === tk);
+    if (!sn || sn.x == null || sn.y == null) continue;
+    lines.push({
+      x1: start.x,
+      y1: start.y,
+      x2: sn.x,
+      y2: sn.y,
+    });
+  }
+  childLinkLines.value = lines;
+}
+
+function onWindowShiftPin(ev: KeyboardEvent): void {
+  if (ev.key !== 'Shift' || ev.repeat) return;
+  if (!pointerOverGraphNode.value || !hoverKey.value || !tooltipVisible.value) return;
+  if (hoverCollapsedChildren.value.length === 0) return;
+  tooltipPinned.value = true;
+  positionTooltipAtClient(
+    lastPointerClient.value.x,
+    lastPointerClient.value.y,
+  );
+  void nextTick(() => updateChildLinkLines());
+}
+
+function dismissPinnedTooltip(): void {
+  if (!tooltipPinned.value && !highlightCollapsedChildKey.value) return;
+  tooltipPinned.value = false;
+  resetCollapsedTooltipInspect();
+  if (!pointerOverGraphNode.value) {
+    hoverKey.value = null;
+    hoverEdgeId.value = null;
+    selection.setHover(null);
+    hoverNeighbors.value = new Set();
+    tooltipVisible.value = false;
+  }
+}
+
+function onWindowEscape(ev: KeyboardEvent): void {
+  if (ev.key !== 'Escape') return;
+  if (tooltipPinned.value || highlightCollapsedChildKey.value) {
+    ev.preventDefault();
+    dismissPinnedTooltip();
+  }
+}
+
+function onTooltipStackPointerLeave(ev: PointerEvent): void {
+  const rel = ev.relatedTarget as Node | null;
+  if (rel && tooltipStackRef.value?.contains(rel)) return;
+  if (rel && (rel as Element).closest?.('[data-sim-node]')) return;
+  resetCollapsedTooltipInspect();
+  if (tooltipPinned.value) {
+    tooltipPinned.value = false;
+  }
+  if (!pointerOverGraphNode.value) {
+    hoverKey.value = null;
+    hoverEdgeId.value = null;
+    selection.setHover(null);
+    hoverNeighbors.value = new Set();
+    tooltipVisible.value = false;
+  }
+}
+
+function onCollapsedRowEnter(c: ModelNode, ev: MouseEvent): void {
+  if (!tooltipPinned.value) return;
+  const row = ev.currentTarget as HTMLElement;
+  const stack = tooltipStackRef.value;
+  if (!stack) return;
+  const rs = row.getBoundingClientRect();
+  const st = stack.getBoundingClientRect();
+  highlightCollapsedChildKey.value = nodeKey(c.type, c.id);
+  linkAnchorEl.value = row.querySelector('.tni-tip__link-icon');
+  childTipOffset.value = {
+    left: stack.offsetWidth + 6,
+    top: rs.top - st.top,
+  };
+  void nextTick(() => updateChildLinkLines());
+}
+
+function onCollapsedRowLeave(ev: MouseEvent): void {
+  const rel = ev.relatedTarget as Node | null;
+  if (rel && tooltipStackRef.value?.contains(rel)) return;
+  highlightCollapsedChildKey.value = null;
+  linkAnchorEl.value = null;
+  childLinkLines.value = [];
+}
+
+function onChildTooltipPointerLeave(ev: MouseEvent): void {
+  const rel = ev.relatedTarget as Node | null;
+  if (rel && tooltipStackRef.value?.contains(rel)) return;
+  highlightCollapsedChildKey.value = null;
+  linkAnchorEl.value = null;
+  childLinkLines.value = [];
+}
+
+watch(
+  () => [
+    tickRev.value,
+    highlightCollapsedChildKey.value,
+    tooltipPos.value.x,
+    tooltipPos.value.y,
+    graphStore.revision,
+  ],
+  () => {
+    if (highlightCollapsedChildKey.value) {
+      void nextTick(() => updateChildLinkLines());
+    }
+  },
+);
 
 function computeNeighbors(key: NodeKey): Set<NodeKey> {
   const out = new Set<NodeKey>();
@@ -320,6 +558,31 @@ const hoverNode = computed<ModelNode | null>(() => {
   return n ? n.model : null;
 });
 
+/** Full-graph nodes hidden by data-layer collapse but grouped under hovered node. */
+const hoverCollapsedChildren = computed<ModelNode[]>(() => {
+  if (!hoverKey.value) return [];
+  return collapsedChildrenForParent(
+    graphStore.graph,
+    dataLayers.value,
+    hoverKey.value,
+  );
+});
+
+const collapsedTargetsByChildKey = computed(() => {
+  const g = graphStore.graph;
+  const layers = dataLayers.value;
+  const m = new Map<string, NodeKey[]>();
+  for (const c of hoverCollapsedChildren.value) {
+    const ck = nodeKey(c.type, c.id);
+    m.set(ck, collapsedChildPresentationTargets(g, layers, ck));
+  }
+  return m;
+});
+
+function collapsedTargetsFor(c: ModelNode): NodeKey[] {
+  return collapsedTargetsByChildKey.value.get(nodeKey(c.type, c.id)) ?? [];
+}
+
 const hoverEdge = computed<Edge | null>(() => {
   if (!hoverEdgeId.value) return null;
   const l = simLinks.value.find((x) => x.model.id === hoverEdgeId.value);
@@ -330,6 +593,29 @@ function parseNodeKey(key: NodeKey): { type: string; id: string } {
   const i = key.indexOf(':');
   return { type: key.slice(0, i), id: key.slice(i + 1) };
 }
+
+const highlightCollapsedChildModel = computed<ModelNode | null>(() => {
+  const k = highlightCollapsedChildKey.value;
+  if (!k) return null;
+  const p = parseNodeKey(k);
+  return graphStore.graph.getNode(p.type as ModelNode['type'], p.id) ?? null;
+});
+
+const childLinkTargetKeys = computed(() => {
+  const k = highlightCollapsedChildKey.value;
+  if (!k) return new Set<NodeKey>();
+  return new Set(
+    collapsedChildPresentationTargets(
+      graphStore.graph,
+      dataLayers.value,
+      k,
+    ),
+  );
+});
+
+const tooltipStackInteractive = computed(
+  () => tooltipPinned.value || highlightCollapsedChildKey.value != null,
+);
 
 function edgePropEntries(e: Edge): Array<[string, unknown]> {
   const out: Array<[string, unknown]> = [];
@@ -370,6 +656,13 @@ function onNodeClick(key: NodeKey, ev: MouseEvent): void {
 }
 
 function onBackgroundClick(): void {
+  tooltipPinned.value = false;
+  resetCollapsedTooltipInspect();
+  hoverKey.value = null;
+  hoverEdgeId.value = null;
+  pointerOverGraphNode.value = false;
+  selection.setHover(null);
+  tooltipVisible.value = false;
   selection.clear();
   fsmStore.dispatch({ type: 'clickBackground' });
 }
@@ -406,16 +699,22 @@ function onVisibility(): void {
   else if (!reducedMotion) layout.resume(0.1);
 }
 
+function onWindowTooltipKeys(ev: KeyboardEvent): void {
+  onWindowShiftPin(ev);
+  onWindowEscape(ev);
+}
+
 onMounted(async () => {
-  rebuild();
   await nextTick();
   initZoom();
   document.addEventListener('visibilitychange', onVisibility);
+  window.addEventListener('keydown', onWindowTooltipKeys);
 });
 
 onBeforeUnmount(() => {
   cancelPointerDrag?.();
   document.removeEventListener('visibilitychange', onVisibility);
+  window.removeEventListener('keydown', onWindowTooltipKeys);
   layout.destroy();
 });
 
@@ -475,6 +774,9 @@ function nodeLabel(n: ModelNode): string {
 }
 
 function dimmed(key: NodeKey): boolean {
+  if (highlightCollapsedChildKey.value && childLinkTargetKeys.value.has(key)) {
+    return false;
+  }
   if (!hoverKey.value) return false;
   if (hoverKey.value === key) return false;
   return !hoverNeighbors.value.has(key);
@@ -545,6 +847,69 @@ defineExpose({ layout, simNodes, simLinks });
     @dblclick="onDoubleClickBackground"
     @keydown="onKeydown"
   >
+    <div
+      class="tni-graph__toolbar"
+      data-tni-toolbar
+      @pointerdown.stop
+    >
+      <div class="tni-graph__tool-row">
+        <button
+          type="button"
+          class="tni-graph__tool-btn"
+          :class="{ 'tni-graph__tool-btn--on': dataLayersMenuOpen }"
+          :aria-expanded="dataLayersMenuOpen"
+          aria-haspopup="true"
+          aria-controls="tni-data-layers-menu"
+          @click="dataLayersMenuOpen = !dataLayersMenuOpen"
+        >
+          Data layers
+        </button>
+        <div
+          v-if="dataLayersMenuOpen"
+          id="tni-data-layers-menu"
+          class="tni-graph__flyout"
+          role="menu"
+          aria-label="Data layers"
+        >
+          <button
+            type="button"
+            class="tni-graph__flyout-btn"
+            role="menuitemcheckbox"
+            :aria-pressed="dataLayers.showFloors"
+            @click="toggleDataLayer('showFloors')"
+          >
+            Floors
+          </button>
+          <button
+            type="button"
+            class="tni-graph__flyout-btn"
+            role="menuitemcheckbox"
+            :aria-pressed="dataLayers.collapseNetworkAddresses"
+            @click="toggleDataLayer('collapseNetworkAddresses')"
+          >
+            Network addresses
+          </button>
+          <button
+            type="button"
+            class="tni-graph__flyout-btn"
+            role="menuitemcheckbox"
+            :aria-pressed="dataLayers.collapseUserports"
+            @click="toggleDataLayer('collapseUserports')"
+          >
+            User ports
+          </button>
+          <button
+            type="button"
+            class="tni-graph__flyout-btn"
+            role="menuitemcheckbox"
+            :aria-pressed="dataLayers.collapseNicPorts"
+            @click="toggleDataLayer('collapseNicPorts')"
+          >
+            NIC ports
+          </button>
+        </div>
+      </div>
+    </div>
     <svg
       ref="svgRef"
       class="tni-graph__svg"
@@ -618,6 +983,7 @@ defineExpose({ layout, simNodes, simLinks });
               dimmed: dimmed(n.id),
               hover: hoverKey === n.id,
               neighbor: hoverNeighbors.has(n.id),
+              'child-link-target': childLinkTargetKeys.has(n.id),
             }"
             @pointerdown="onNodePointerDown(n.id, $event)"
             @mouseenter="onNodeEnter(n.id, $event)"
@@ -639,15 +1005,39 @@ defineExpose({ layout, simNodes, simLinks });
             </text>
           </g>
         </g>
+        <g
+          v-if="childLinkLines.length > 0"
+          class="tni-graph__child-links"
+          pointer-events="none"
+        >
+          <line
+            v-for="(ln, i) in childLinkLines"
+            :key="i"
+            class="tni-graph__child-link-line"
+            :x1="ln.x1"
+            :y1="ln.y1"
+            :x2="ln.x2"
+            :y2="ln.y2"
+          />
+        </g>
       </g>
     </svg>
     <div
-      ref="tooltipRef"
-      class="tni-graph__tooltip"
-      :class="{ visible: tooltipVisible }"
+      ref="tooltipStackRef"
+      data-tni-tooltip-stack
+      class="tni-tooltip-stack"
+      :class="{
+        visible: tooltipVisible,
+        'tni-tooltip-stack--interactive': tooltipStackInteractive,
+      }"
       :style="{ left: `${tooltipPos.x}px`, top: `${tooltipPos.y}px` }"
+      @pointerleave="onTooltipStackPointerLeave"
     >
-      <template v-if="hoverNode">
+      <div
+        v-if="hoverNode"
+        ref="tooltipPanelRef"
+        class="tni-graph__tooltip tni-graph__tooltip--panel"
+      >
         <div class="tni-tip__head">
           <span class="tni-tip__type">{{ hoverNode.type }}</span>
           <span class="tni-tip__sep">·</span>
@@ -672,11 +1062,62 @@ defineExpose({ layout, simNodes, simLinks });
             <span class="tni-tip__prop-v">{{ v }}</span>
           </div>
         </div>
+        <div
+          v-if="hoverCollapsedChildren.length > 0"
+          class="tni-tip__collapsed"
+          :class="{ 'tni-tip__collapsed--pinned': tooltipPinned }"
+        >
+          <div class="tni-tip__collapsed-title">
+            Grouped here (data layers)
+          </div>
+          <div
+            v-for="c in hoverCollapsedChildren"
+            :key="`${c.type}:${c.id}`"
+            class="tni-tip__collapsed-row"
+            :class="{
+              'tni-tip__collapsed-row--active':
+                highlightCollapsedChildKey === nodeKey(c.type, c.id),
+            }"
+            @mouseenter="onCollapsedRowEnter(c, $event)"
+            @mouseleave="onCollapsedRowLeave"
+          >
+            <span
+              v-if="collapsedTargetsFor(c).length > 0"
+              class="tni-tip__link-icon"
+              aria-label="Linked in graph"
+              title="Linked in graph"
+            >
+              <svg class="tni-tip__link-svg" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+                <path
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.35"
+                  stroke-linecap="round"
+                  d="M6 9a3 3 0 0 1 0-4l1-1a3 3 0 0 1 4 4l-1 1M10 7a3 3 0 0 1 0 4l-1 1a3 3 0 0 1-4-4l1-1"
+                />
+              </svg>
+            </span>
+            <span class="tni-tip__type">{{ c.type }}</span>
+            <span class="tni-tip__sep">·</span>
+            <span class="tni-tip__id">{{ c.id }}</span>
+            <span
+              v-if="c.properties['name']"
+              class="tni-tip__collapsed-name"
+            >{{ c.properties['name'] }}</span>
+          </div>
+          <div v-if="!tooltipPinned" class="tni-tip__collapsed-hint">
+            Hold <kbd>Shift</kbd> to pin, then hover a row for link targets.
+          </div>
+        </div>
         <div class="tni-tip__footer">
           neighbors: {{ hoverNeighbors.size }}
         </div>
-      </template>
-      <template v-else-if="hoverEdge">
+      </div>
+      <div
+        v-else-if="hoverEdge"
+        ref="tooltipPanelRef"
+        class="tni-graph__tooltip tni-graph__tooltip--panel"
+      >
         <div class="tni-tip__head">
           <span class="tni-tip__type">{{ hoverEdge.relation }}</span>
           <span class="tni-tip__sep">·</span>
@@ -710,7 +1151,51 @@ defineExpose({ layout, simNodes, simLinks });
         <div class="tni-tip__footer">
           strength: {{ hoverEdge.strength.toFixed(2) }}
         </div>
-      </template>
+      </div>
+      <div
+        v-if="highlightCollapsedChildModel"
+        class="tni-graph__tooltip tni-graph__tooltip--child"
+        :style="{
+          left: `${childTipOffset.left}px`,
+          top: `${childTipOffset.top}px`,
+        }"
+        @pointerleave="onChildTooltipPointerLeave"
+      >
+        <div class="tni-tip__head">
+          <span class="tni-tip__type">{{ highlightCollapsedChildModel.type }}</span>
+          <span class="tni-tip__sep">·</span>
+          <span class="tni-tip__id">{{ highlightCollapsedChildModel.id }}</span>
+        </div>
+        <div
+          v-if="highlightCollapsedChildModel.properties['name']"
+          class="tni-tip__name"
+        >
+          {{ highlightCollapsedChildModel.properties['name'] }}
+        </div>
+        <div
+          v-if="highlightCollapsedChildModel.tags.length > 0"
+          class="tni-tip__tags"
+        >
+          <span
+            v-for="t in highlightCollapsedChildModel.tags"
+            :key="t"
+            class="tni-tip__tag"
+          >{{ t }}</span>
+        </div>
+        <div
+          v-if="nodePropEntries(highlightCollapsedChildModel).length > 0"
+          class="tni-tip__props"
+        >
+          <div
+            v-for="[k, v] in nodePropEntries(highlightCollapsedChildModel)"
+            :key="k"
+            class="tni-tip__prop-row"
+          >
+            <span class="tni-tip__prop-k">{{ k }}</span>
+            <span class="tni-tip__prop-v">{{ v }}</span>
+          </div>
+        </div>
+      </div>
     </div>
     <div class="tni-graph__hud">
       <span>{{ simNodes.length }} nodes · {{ simLinks.length }} edges</span>
@@ -731,6 +1216,58 @@ defineExpose({ layout, simNodes, simLinks });
   background: var(--tni-bg);
   overflow: hidden;
   outline: none;
+}
+
+.tni-graph__toolbar {
+  position: absolute;
+  top: 0.5rem;
+  left: 0.5rem;
+  z-index: 6;
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 0.35rem;
+  pointer-events: auto;
+}
+
+.tni-graph__tool-row {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 0.35rem;
+}
+
+.tni-graph__tool-btn,
+.tni-graph__flyout-btn {
+  font-family: var(--tni-font-ui);
+  font-size: 0.72rem;
+  padding: 0.35rem 0.55rem;
+  border-radius: var(--tni-radius);
+  border: 1px solid var(--tni-border);
+  background: var(--tni-bg-elevated);
+  color: var(--tni-fg);
+  cursor: pointer;
+  text-align: left;
+  box-shadow: var(--tni-shadow-1);
+}
+
+.tni-graph__tool-btn:hover,
+.tni-graph__flyout-btn:hover {
+  border-color: var(--tni-accent);
+}
+
+.tni-graph__tool-btn--on,
+.tni-graph__flyout-btn[aria-pressed='true'] {
+  background: var(--tni-accent);
+  color: var(--tni-bg);
+  border-color: var(--tni-accent);
+}
+
+.tni-graph__flyout {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 10.5rem;
 }
 
 .tni-graph:focus-visible {
@@ -763,6 +1300,12 @@ defineExpose({ layout, simNodes, simLinks });
 .tni-graph__nodes g.hover .tni-graph__node-shape {
   stroke: var(--tni-accent);
   stroke-width: 2;
+}
+
+.tni-graph__nodes g.child-link-target .tni-graph__node-shape {
+  stroke: var(--tni-accent);
+  stroke-width: 2;
+  filter: drop-shadow(0 0 4px var(--tni-accent, #4a9eff));
 }
 
 .tni-graph__nodes g.selected .tni-graph__node-shape {
@@ -811,12 +1354,25 @@ defineExpose({ layout, simNodes, simLinks });
   pointer-events: none;
 }
 
-.tni-graph__tooltip {
+.tni-tooltip-stack {
   position: absolute;
+  z-index: 5;
   pointer-events: none;
   opacity: 0;
   transform: translateY(2px);
   transition: opacity 80ms ease, transform 80ms ease;
+}
+
+.tni-tooltip-stack.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.tni-tooltip-stack--interactive {
+  pointer-events: auto;
+}
+
+.tni-graph__tooltip {
   background: var(--tni-bg-elevated);
   color: var(--tni-fg);
   border: 1px solid var(--tni-border);
@@ -825,12 +1381,29 @@ defineExpose({ layout, simNodes, simLinks });
   font-size: 0.8rem;
   max-width: 20rem;
   box-shadow: var(--tni-shadow-2);
-  z-index: 5;
 }
 
-.tni-graph__tooltip.visible {
-  opacity: 1;
-  transform: translateY(0);
+.tni-graph__tooltip--panel {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.tni-graph__tooltip--child {
+  position: absolute;
+  z-index: 2;
+  min-width: 10rem;
+  max-width: 18rem;
+}
+
+.tni-graph__child-links {
+  pointer-events: none;
+}
+
+.tni-graph__child-link-line {
+  stroke: var(--tni-accent, #4a9eff);
+  stroke-width: 1.75;
+  stroke-opacity: 0.9;
+  stroke-dasharray: 5 3;
 }
 
 .tni-tip__head {
@@ -896,6 +1469,68 @@ defineExpose({ layout, simNodes, simLinks });
 .tni-tip__prop-v {
   color: var(--tni-fg);
   word-break: break-all;
+}
+
+.tni-tip__collapsed {
+  margin-top: 0.35rem;
+  padding-top: 0.35rem;
+  border-top: 1px solid var(--tni-border);
+  font-family: var(--tni-font-mono);
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+
+.tni-tip__collapsed-title {
+  color: var(--tni-fg-muted);
+  font-size: 0.68rem;
+  margin-bottom: 0.2rem;
+}
+
+.tni-tip__collapsed-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.15rem 0.35rem;
+  padding: 0.2rem 0.3rem;
+  margin: 0.1rem -0.3rem;
+  border-radius: calc(var(--tni-radius) - 2px);
+}
+
+.tni-tip__collapsed-row--active {
+  background: var(--tni-bg);
+  outline: 1px solid var(--tni-accent);
+}
+
+.tni-tip__link-icon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--tni-accent);
+  flex-shrink: 0;
+}
+
+.tni-tip__link-svg {
+  display: block;
+}
+
+.tni-tip__collapsed-hint {
+  margin-top: 0.35rem;
+  font-size: 0.65rem;
+  color: var(--tni-fg-muted);
+  line-height: 1.35;
+}
+
+.tni-tip__collapsed-hint kbd {
+  font-family: var(--tni-font-mono);
+  font-size: 0.6rem;
+  padding: 0.05rem 0.3rem;
+  border: 1px solid var(--tni-border);
+  border-radius: 3px;
+  background: var(--tni-bg);
+}
+
+.tni-tip__collapsed-name {
+  color: var(--tni-fg-muted);
+  font-size: 0.68rem;
 }
 
 .tni-tip__footer {
