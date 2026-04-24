@@ -48,6 +48,7 @@ import {
 import { GraphLayout, type SimLink, type SimNode } from './layout';
 import {
   buildPresentationGraph,
+  collapsedChildPresentationLinkGroups,
   collapsedChildPresentationTargets,
   collapsedChildrenForParent,
   DEFAULT_DATA_LAYERS,
@@ -725,39 +726,33 @@ const highlightCollapsedChildModel = computed<ModelNode | null>(() => {
   return graphStore.graph.getNode(p.type as ModelNode['type'], p.id) ?? null;
 });
 
-/** Presentation targets for the highlighted collapsed child (full `Node` models). */
-const highlightCollapsedChildLinkTargets = computed<ModelNode[]>(() => {
-  const k = highlightCollapsedChildKey.value;
-  if (!k) return [];
-  const keys = collapsedChildPresentationTargets(
-    graphStore.graph,
-    dataLayers.value,
-    k,
-  );
-  const out: ModelNode[] = [];
-  for (const nk of keys) {
-    const p = parseNodeKey(nk);
-    const n = graphStore.graph.getNode(p.type as ModelNode['type'], p.id);
-    if (n) out.push(n);
-  }
-  return out;
-});
-
 /** Primary collapsed node, then each link target with a LINK / ALSO bridge label. */
 interface ChildTooltipSection {
   node: ModelNode;
   before?: 'LINK' | 'ALSO';
+  /** Source edges from the collapsed child to this presentation target (after remap). */
+  bridgeEdges?: Edge[];
 }
 
 const childTooltipSections = computed<ChildTooltipSection[]>(() => {
   const primary = highlightCollapsedChildModel.value;
-  if (!primary) return [];
-  const links = highlightCollapsedChildLinkTargets.value;
+  const ck = highlightCollapsedChildKey.value;
+  if (!primary || !ck) return [];
+  const groups = collapsedChildPresentationLinkGroups(
+    graphStore.graph,
+    dataLayers.value,
+    ck,
+  );
   const out: ChildTooltipSection[] = [{ node: primary }];
-  for (let i = 0; i < links.length; i++) {
+  for (let i = 0; i < groups.length; i++) {
+    const g = groups[i]!;
+    const p = parseNodeKey(g.targetKey);
+    const n = graphStore.graph.getNode(p.type as ModelNode['type'], p.id);
+    if (!n) continue;
     out.push({
-      node: links[i]!,
+      node: n,
       before: i === 0 ? 'LINK' : 'ALSO',
+      bridgeEdges: g.edges,
     });
   }
   return out;
@@ -1362,6 +1357,32 @@ defineExpose({ layout, simNodes, simLinks });
             <span class="tni-tip__bridge-bubble">{{ sec.before }}</span>
             <span class="tni-tip__bridge-line" />
           </div>
+          <template v-if="sec.bridgeEdges?.length">
+            <div
+              v-for="be in sec.bridgeEdges"
+              :key="be.id"
+              class="tni-tip__bridge-edge-wrap"
+            >
+              <div class="tni-tip__head">
+                <span class="tni-tip__type">{{ be.relation }}</span>
+                <span class="tni-tip__sep">·</span>
+                <span class="tni-tip__id">{{ be.directed ? 'directed' : 'undirected' }}</span>
+              </div>
+              <div
+                v-if="edgePropEntries(be).length > 0"
+                class="tni-tip__tags"
+              >
+                <span
+                  v-for="[k, v] in edgePropEntries(be)"
+                  :key="k"
+                  class="tni-tip__tag"
+                >{{ k }}={{ v }}</span>
+              </div>
+              <div class="tni-tip__footer">
+                strength: {{ be.strength.toFixed(2) }}
+              </div>
+            </div>
+          </template>
           <div class="tni-tip__node-block">
             <div class="tni-tip__head">
               <span class="tni-tip__type">{{ sec.node.type }}</span>
@@ -1760,6 +1781,15 @@ defineExpose({ layout, simNodes, simLinks });
   border: 1px solid var(--tni-border);
   background: var(--tni-bg);
   color: var(--tni-accent);
+}
+
+.tni-tip__bridge-edge-wrap {
+  min-width: 0;
+  margin: 0.2rem 0 0.35rem;
+}
+
+.tni-tip__bridge-edge-wrap + .tni-tip__bridge-edge-wrap {
+  margin-top: 0.45rem;
 }
 
 .tni-tip__node-block {

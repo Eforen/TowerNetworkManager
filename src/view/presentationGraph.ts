@@ -10,7 +10,7 @@ import {
   parseCompositeDevicePortId,
   parseNodeKey,
 } from '@/model';
-import type { Node, NodeKey } from '@/model';
+import type { Edge, Node, NodeKey } from '@/model';
 
 /** Persisted under `tni.view.dataLayers` (JSON). */
 export interface DataLayersSettings {
@@ -147,6 +147,53 @@ export function getPresentationCollapseState(
   return { remap, visibleKeys };
 }
 
+/** One presentation neighbor of a collapsed child plus all source edges that map to it. */
+export interface PresentationLinkGroup {
+  targetKey: NodeKey;
+  edges: Edge[];
+}
+
+/**
+ * Presentation-space neighbors for a source node (after collapse remap),
+ * excluding the child's own collapsed identity. Each target lists every
+ * incident source edge from `childKey` whose other endpoint resolves to that
+ * target (several relations can share one presentation node).
+ */
+export function collapsedChildPresentationLinkGroups(
+  source: Graph,
+  layers: DataLayersSettings,
+  childKey: NodeKey,
+): PresentationLinkGroup[] {
+  const { remap, visibleKeys } = getPresentationCollapseState(source, layers);
+  const childPresent = resolveRemap(childKey, remap);
+  const byTarget = new Map<NodeKey, Edge[]>();
+  for (const e of source.edges.values()) {
+    let other: NodeKey | null = null;
+    if (e.fromKey === childKey) other = e.toKey;
+    else if (e.toKey === childKey) other = e.fromKey;
+    else continue;
+    const r = resolveRemap(other, remap);
+    if (r === childPresent) continue;
+    if (!visibleKeys.has(r)) continue;
+    let arr = byTarget.get(r);
+    if (!arr) {
+      arr = [];
+      byTarget.set(r, arr);
+    }
+    arr.push(e);
+  }
+  const keys = [...byTarget.keys()].sort((a, b) => a.localeCompare(b));
+  return keys.map((targetKey) => {
+    const edges = byTarget.get(targetKey)!;
+    edges.sort((a, b) => {
+      const cr = a.relation.localeCompare(b.relation);
+      if (cr !== 0) return cr;
+      return a.id.localeCompare(b.id);
+    });
+    return { targetKey, edges };
+  });
+}
+
 /**
  * Presentation-space neighbor keys for a source node (after collapse remap),
  * excluding the child's own collapsed identity. Omits targets not visible
@@ -157,24 +204,9 @@ export function collapsedChildPresentationTargets(
   layers: DataLayersSettings,
   childKey: NodeKey,
 ): NodeKey[] {
-  const { remap, visibleKeys } = getPresentationCollapseState(source, layers);
-  const childPresent = resolveRemap(childKey, remap);
-  const seen = new Set<NodeKey>();
-  const out: NodeKey[] = [];
-  for (const e of source.edges.values()) {
-    let other: NodeKey | null = null;
-    if (e.fromKey === childKey) other = e.toKey;
-    else if (e.toKey === childKey) other = e.fromKey;
-    else continue;
-    const r = resolveRemap(other, remap);
-    if (r === childPresent) continue;
-    if (!visibleKeys.has(r)) continue;
-    if (seen.has(r)) continue;
-    seen.add(r);
-    out.push(r);
-  }
-  out.sort((a, b) => a.localeCompare(b));
-  return out;
+  return collapsedChildPresentationLinkGroups(source, layers, childKey).map(
+    (g) => g.targetKey,
+  );
 }
 
 /**

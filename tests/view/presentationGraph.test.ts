@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Graph, syncEphemeralDevicePorts } from '@/model';
 import {
   buildPresentationGraph,
+  collapsedChildPresentationLinkGroups,
   collapsedChildPresentationTargets,
   collapsedChildrenForParent,
   DEFAULT_DATA_LAYERS,
@@ -142,6 +143,24 @@ describe('presentationGraph', () => {
     const t = collapsedChildPresentationTargets(g, layers, 'userport:9');
     expect(t).toContain('server:s1');
     expect(t).not.toContain('customer:c1');
+  });
+
+  it('collapsedChildPresentationLinkGroups attaches source edges per target', () => {
+    const g = smallGraph();
+    const layers = {
+      ...DEFAULT_DATA_LAYERS,
+      collapseUserports: true,
+      collapseNicPorts: true,
+    };
+    const groups = collapsedChildPresentationLinkGroups(g, layers, 'userport:9');
+    expect(groups.length).toBe(1);
+    expect(groups[0]!.targetKey).toBe('server:s1');
+    expect(groups[0]!.edges.some((e) => e.relation === 'NetworkCableLinkRJ45')).toBe(
+      true,
+    );
+    expect(collapsedChildPresentationTargets(g, layers, 'userport:9')).toEqual(
+      groups.map((x) => x.targetKey),
+    );
   });
 
   it('collapsedChildPresentationTargets empty for address with only assignee', () => {
