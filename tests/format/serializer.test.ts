@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ENTITY_TYPE_ORDER, RELATION_ORDER, parse, serialize } from '@/format';
 import { Graph } from '@/model';
@@ -93,6 +95,27 @@ describe('format/serializer – node formatting', () => {
     const line = out.split('\n').find((l) => l.startsWith('switch '));
     expect(line).toBeDefined();
     expect(line).not.toMatch(/#Physical|#Device|#Network|#Switch/);
+  });
+
+  it('emits default-magnitude server/switch props so canonical text is explicit', () => {
+    const g = new Graph();
+    g.addNode({ type: 'server', id: 'db01' });
+    g.addNode({ type: 'switch', id: 'sw1' });
+    const out = serialize(g);
+    expect(out).toMatch(/server db01 .*cpuTotal=8/);
+    expect(out).toMatch(/server db01 .*memoryTotal=8/);
+    expect(out).toMatch(/server db01 .*storageTotal=16/);
+    expect(out).toMatch(/server db01 .*traversalsPerTick=200/);
+    expect(out).toMatch(/switch sw1 .*traversalsPerTick=1000/);
+  });
+
+  it('parse(example) then serialize emits server capacity props', () => {
+    const path = join(process.cwd(), 'examples/simon_rel_1.tni');
+    const text = readFileSync(path, 'utf8');
+    const out = serialize(parse(text).graph);
+    expect(out).toMatch(
+      /server 55153 FIBER\[3\] .*cpuTotal=8.*memoryTotal=8.*storageTotal=16.*traversalsPerTick=200/s,
+    );
   });
 
   it('serializes userport with positional media and remaining tags', () => {

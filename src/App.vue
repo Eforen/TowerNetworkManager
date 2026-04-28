@@ -41,8 +41,13 @@ const lastError = ref<string | null>(null);
 const importField = ref('');
 const drawerOpen = ref(false);
 
-const canonicalText = computed(() =>
-  manualSourceMode.value ? '' : graphStore.serializeText(),
+/** Always serialize the live graph so the drawer matches save/export (not blank in manual mode). */
+const canonicalText = computed(() => graphStore.serializeText());
+
+const canonicalDrawerHint = computed(() =>
+  manualSourceMode.value && graphStore.stats.nodes === 0
+    ? 'Raw edit mode: graph is empty until you apply parse — canonical below is only the header until then.'
+    : '',
 );
 
 function flash(msg: string): void {
@@ -240,9 +245,17 @@ onBeforeUnmount(() => {
             <button type="button" @click="onCancelSource">Cancel manual</button>
           </div>
         </section>
-        <details v-else open>
-          <summary>Canonical text ({{ canonicalText.length }} B)</summary>
-          <pre class="tni-code">{{ canonicalText }}</pre>
+        <details open>
+          <summary>Canonical text from graph ({{ canonicalText.length }} B)</summary>
+          <p v-if="canonicalDrawerHint" class="tni-hint">{{ canonicalDrawerHint }}</p>
+          <p v-else class="tni-hint tni-canonical-legend">
+            This is the exact text <strong>save</strong> / <strong>export</strong> write (merged model, not your import draft).
+            Each <code>server</code> line should end with
+            <code>cpuTotal=… memoryTotal=… storageTotal=… traversalsPerTick=…</code>
+            (and <code>switch</code> / <code>router</code> include <code>traversalsPerTick=…</code>).
+            If you only see <code>!tni v1</code>, the graph is empty — use <strong>import</strong>, <strong>load</strong>, or <strong>seed demo</strong>.
+          </p>
+          <pre class="tni-code tni-canonical-pre">{{ canonicalText }}</pre>
         </details>
         <p class="tni-hint">
           Press <kbd>`</kbd> for palette. <kbd>f</kbd>/<kbd>g</kbd> fit/floor layout.
@@ -408,6 +421,14 @@ textarea {
   max-height: 12rem;
   font-family: var(--tni-font-mono);
   font-size: 0.78rem;
+}
+
+/* Long entity lines otherwise extend past the drawer; props sit at the end. */
+.tni-canonical-pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  max-height: min(40vh, 22rem);
 }
 .tni-hint {
   margin: 0.5rem 0 0;

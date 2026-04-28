@@ -41,14 +41,14 @@ customer muddy-chihuahua
 
 # Infrastructure
 ## Floor 0
-router 39915 RJ45[5] FIBER[5]
+router 39915 RJ45[5] FIBER[5] traversalsPerTick=125
 uplink DPUW FIBER
 -> floor[f0] :FloorAssignment
 -> port[39915/port6] :NetworkCableLinkFiber
 uplink BCGO FIBER
 -> floor[f0] :FloorAssignment
 -> port[39915/port7] :NetworkCableLinkFiber
-server 55153 FIBER[3]
+server 55153 FIBER[3] cpuTotal=24 storageTotal=12 memoryTotal=14 traversalsPerTick=150
 port[55153/port0] -> port[39915/port5] :NetworkCableLinkRJ45
 
 ## Floor 1
@@ -56,7 +56,7 @@ uplink HYHH FIBER
 -> floor[f1] :FloorAssignment
 -> uplink[DPUW] :UplinkConnection
 
-router 26564 FIBER[2] RJ45[3]
+router 26564 FIBER[2] RJ45[3] traversalsPerTick=60
 => networkaddress @f1/r/1
 -> floor[f1] :FloorAssignment
 port[26564/port0] -> uplink[HYHH] :NetworkCableLinkFiber
@@ -70,15 +70,20 @@ uplink MTVW FIBER
 -> uplink[BCGO] :UplinkConnection
 uplink HAAJ RJ45
 -> floor[f2] :FloorAssignment
-router 86110 FIBER[2] RJ45[3]
+router 86110 FIBER[2] RJ45[3] traversalsPerTick=60
 port[86110/port0] -> uplink[MTVW] :NetworkCableLinkFiber
 port[86110/port2] -> customer[same-millipede]>userport :NetworkCableLinkRJ45
 port[86110/port3] -> customer[sparkling-stingray]>userport :NetworkCableLinkRJ45
 port[86110/port4] -> customer[muddy-chihuahua]>userport :NetworkCableLinkRJ45
 => networkaddress @f2/r/1
 -> floor[f2] :FloorAssignment
-port[86110/port0] -> uplink[HAAJ] :NetworkCableLinkFiber
-switch 8686 RJ45[5]
+switch 8686 RJ45[5] traversalsPerTick=25
 => networkaddress @f2/sw/1
 -> floor[f2] :FloorAssignment
 port[86110/port4] -> port[8686/port0] :NetworkCableLinkRJ45
+
+## Backstock
+#Make_Disco #Model_Nano
+router 74218 FIBER[2] RJ45[3] traversalsPerTick=60
+#Make_Disco #Model_Nano
+router 64888 FIBER[2] RJ45[3] traversalsPerTick=60

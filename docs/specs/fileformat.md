@@ -46,7 +46,7 @@ Line-oriented text format for serializing a Tower Networking Manager project. Mi
   - For `usagetype`: a kebab-case slug from the canonical catalog in [behaviors.md](behaviors.md) (or a custom slug matching `[a-z][a-z0-9-]*`).
   - For `program`: a slug matching `[a-z][a-z0-9_-]*` (game-style ids allow underscores, e.g. `padu_v1`); see [programs.md](programs.md).
   - For `customer`, `player`, `server`, `switch`, `router`, `floor`, `rack`, `customertype`, `rtable`, `consumerbehavior`, `producerbehavior`, `behaviorinsight`: an identifier.
-- Tags and properties are optional and order-independent inside a single line.
+- Tags and properties are optional and order-independent inside a single line. On parse, the model merges [graphdata.md](graphdata.md) defaults for that type into the node’s property bag (omitted keys pick up defaults). Canonical **serialize** emits every key then present on the node (see **Canonical serialization** §5), so saved text lists the full effective state.
 - Re-declaration of the same `(type, id)` is an error.
 
 ### User port declaration
@@ -116,14 +116,15 @@ domain "example.com"
 - Direction is left-to-right. Undirected relationships (cable links, uplink connections) are serialized with endpoints in id-sorted order and `:` is required to disambiguate from ambiguous pairs.
 - `:<RelationName>` is the canonical edge type from [graphdata.md](graphdata.md): `NIC`, `Owner`, `AssignedTo`, `Route`, `FloorAssignment`, `RackAssignment`, `NetworkCableLinkRJ45`, `NetworkCableLinkFiber`, `UplinkConnection`, `Insight`, `Consumes`, `Provides`, `Install`.
   - If omitted, the parser infers it from the single legal edge type between the two endpoint types; if zero or more than one match, this is an error.
-- `{...}` contains optional edge properties.
+- Optional **edge properties** use the same `key=value` tokens as entities (see **Lexical rules** → **Property**), comma-separated inside `{` `}` after the relation (or after the `-> …` pair when the relation is inferred). Grammatically this is `PropList` on `EdgeDecl` / arrow lines in **Grammar (EBNF)** below — same `Prop` / `PropList` as `EntityDecl`.
+- Which keys are meaningful for which relation (e.g. `Route` → `target`, `Consumes` / `Provides` → `required`, `amount`, `pool`) is specified per edge type in the relations table in [graphdata.md](graphdata.md); the file format carries arbitrary allowed pairs as opaque metadata until validation.
 
 Examples:
 
 ```
 customer[organic-goat] -> customertype[casual_dweller] :Owner
 customer[organic-goat] -> userport[38118] :Owner
-networkaddress[@f1/c/1] -> customer[organic-goat] :AssignedTo
+networkaddress[@f1/c/1] -> customer[organic-goat] :AssignedTo {note=primary}
 port[sw1/port0] -> userport[38118] :NetworkCableLinkRJ45
 switch[sw1] -> port[sw1/port0] :NIC
 server[db01] -> port[db01/port1] :NIC
@@ -258,7 +259,7 @@ To guarantee byte-identical round-trips (modulo user comments, which are preserv
 2. Emit entities, grouped and ordered by type in this fixed order: `floor`, `rack`, `uplink`, `port`, `userport`, `switch`, `router`, `server`, `program`, `rtable`, `player`, `customertype`, `customer`, `domain`, `networkaddress`, `usagetype`, `behaviorinsight`, `consumerbehavior`, `producerbehavior`. Within a group, sort by id (lexicographic; network addresses compared as strings).
 3. Emit one blank line.
 4. Emit edges, grouped by relation in this fixed order: `FloorAssignment`, `RackAssignment`, `UplinkConnection`, `NetworkCableLinkFiber`, `NetworkCableLinkRJ45`, `NIC`, `Install`, `Owner`, `AssignedTo`, `Route`, `Insight`, `Consumes`, `Provides`. Within a group, sort by `(fromType, fromId, toType, toId)`.
-5. Within entity/edge lines, tag tokens come before property tokens; tags sorted lexicographically; props sorted lexicographically by key.
+5. Within entity/edge lines, tag tokens come before property tokens; tags sorted lexicographically; props sorted lexicographically by key. For **entities**, emit every property key present on the node in the model (after parse-time default merge), **including** values that equal the type default — e.g. `server` lines include `cpuTotal`, `memoryTotal`, `storageTotal`, and `traversalsPerTick` whenever those keys exist on the node — so canonical text fully states stored fields. Exception: device `portLayout` is not emitted as `portLayout=…`; it appears only as the positional layout token on `server` / `switch` / `router` lines. Default type **tags** are not re-emitted; the parser merges them back on load.
 6. Quoted strings normalized to use `"` quotes with minimal escaping.
 7. Trailing whitespace stripped; file ends with exactly one newline.
 

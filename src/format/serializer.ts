@@ -13,8 +13,10 @@
  *      `portLayout` slot (no edge props) is omitted; sync recreates them on load.
  *   5. Tags before properties; tags sorted; property keys sorted.
  *   6. Strings quoted with minimal escaping.
- *   7. Default tags and properties for a node type are elided so that
- *      `parse(serialize(model))` is stable; they are re-applied on parse.
+ *   7. Default **tags** for a node type are elided; parse re-applies them.
+ *      **Properties** are serialized in full for every key present on the
+ *      node (including values equal to type defaults), so canonical text is
+ *      explicit and every stored field is visible / round-trippable from text.
  *
  * Round-trip guarantees:
  *
@@ -23,7 +25,6 @@
  */
 
 import {
-  DEFAULT_PROPERTIES_BY_TYPE,
   DEFAULT_TAGS_BY_TYPE,
   HARDWARE_ADDR_RE,
   NET_ADDR_RE,
@@ -136,7 +137,6 @@ function serializeNode(node: Node, _graph: Graph): string {
     .sort((a, b) => a.localeCompare(b));
   for (const t of emittedTags) parts.push(`#${t}`);
 
-  const defaultProps = DEFAULT_PROPERTIES_BY_TYPE[node.type] ?? {};
   const keys = Object.keys(node.properties)
     .filter((k) => {
       if (k === 'portLayout' && (node.type === 'server' || node.type === 'switch' || node.type === 'router')) {
@@ -147,7 +147,6 @@ function serializeNode(node: Node, _graph: Graph): string {
     .sort((a, b) => a.localeCompare(b));
   for (const k of keys) {
     const v = node.properties[k];
-    if (defaultProps[k] !== undefined && defaultProps[k] === v) continue;
     parts.push(`${k}=${formatValue(v)}`);
   }
 
@@ -169,11 +168,9 @@ function serializePortNode(node: Node): string {
     .sort((a, b) => a.localeCompare(b));
   for (const t of emittedTags) parts.push(`#${t}`);
 
-  const defaultProps = DEFAULT_PROPERTIES_BY_TYPE.port ?? {};
   const keys = Object.keys(node.properties).sort((a, b) => a.localeCompare(b));
   for (const k of keys) {
     const v = node.properties[k];
-    if (defaultProps[k] !== undefined && defaultProps[k] === v) continue;
     parts.push(`${k}=${formatValue(v)}`);
   }
   return parts.join(' ');
@@ -189,11 +186,9 @@ function serializeUserportNode(node: Node): string {
     .filter((t) => !hidden.has(t))
     .sort((a, b) => a.localeCompare(b));
   for (const t of emittedTags) parts.push(`#${t}`);
-  const defaultProps = DEFAULT_PROPERTIES_BY_TYPE.userport ?? {};
   const keys = Object.keys(node.properties).sort((a, b) => a.localeCompare(b));
   for (const k of keys) {
     const v = node.properties[k];
-    if (defaultProps[k] !== undefined && defaultProps[k] === v) continue;
     parts.push(`${k}=${formatValue(v)}`);
   }
   return parts.join(' ');
@@ -209,11 +204,9 @@ function serializeUplinkNode(node: Node): string {
     .filter((t) => !hidden.has(t))
     .sort((a, b) => a.localeCompare(b));
   for (const t of emittedTags) parts.push(`#${t}`);
-  const defaultProps = DEFAULT_PROPERTIES_BY_TYPE.uplink ?? {};
   const keys = Object.keys(node.properties).sort((a, b) => a.localeCompare(b));
   for (const k of keys) {
     const v = node.properties[k];
-    if (defaultProps[k] !== undefined && defaultProps[k] === v) continue;
     parts.push(`${k}=${formatValue(v)}`);
   }
   return parts.join(' ');
