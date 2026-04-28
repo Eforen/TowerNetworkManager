@@ -43,6 +43,7 @@ import {
   nodeFamily,
   nodeRadius,
   nodeShape,
+  portIconKey,
   EDGE_VISUALS,
 } from './visuals';
 import { GraphLayout, type SimLink, type SimNode } from './layout';
@@ -948,6 +949,8 @@ function shapeSymbol(n: SimNode): string {
       const s = r;
       return `M${-s},0 q0,${-s} ${s},${-s} q${s},0 ${s},${s} q0,${s} ${-s},${s} q${-s},0 ${-s},${-s} z`;
     }
+    case 'portIcon':
+      return '';
   }
 }
 
@@ -1004,6 +1007,36 @@ function edgeMidpoint(l: SimLink): { x: number; y: number } {
 
 function nodeFill(n: ModelNode): string {
   return `var(${fillVar(nodeFamily(n.type))})`;
+}
+
+function isPortIcon(n: SimNode): boolean {
+  return nodeShape(n.model.type) === 'portIcon';
+}
+
+function portIconVariant(n: SimNode): 'rj45' | 'fiber' {
+  return portIconKey(n.model.tags);
+}
+
+function iconHref(n: SimNode): string {
+  return portIconVariant(n) === 'fiber' ? '#tni-icon-fiber' : '#tni-icon-rj45';
+}
+
+/**
+ * Bounding box for the port icon. RJ45 plug is roughly square-ish (1.29:1),
+ * SC fiber is wider (1.36:1). We scale to the node radius so layout/collision
+ * still match `nodeRadius`.
+ */
+function portBox(n: SimNode): { w: number; h: number } {
+  const r = nodeRadius(n.model.type);
+  const variant = portIconVariant(n);
+  if (variant === 'fiber') {
+    return { w: r * 2.4, h: r * 1.8 };
+  }
+  return { w: r * 2.2, h: r * 2 };
+}
+
+function portFrameStroke(n: SimNode): string {
+  return `var(${fillVar(nodeFamily(n.model.type))})`;
 }
 
 function hasArrow(e: Edge): boolean {
@@ -1112,6 +1145,49 @@ defineExpose({ layout, simNodes, simLinks });
         >
           <path d="M0,-4 L8,0 L0,4 z" :fill="`var(${EDGE_VISUALS[rel as keyof typeof EDGE_VISUALS].strokeVar})`" />
         </marker>
+        <symbol id="tni-icon-rj45" viewBox="59.896 69.931 121.88 94.625">
+          <rect
+            style="stroke:#0a0a0a;stroke-linecap:square;stroke-width:4;fill:#ffffff"
+            rx="4.5139" ry="4.5139" height="90.625" width="117.88" y="69.931" x="59.896"
+          />
+          <path
+            d="m73.958 75.66h89.41c2.3083 0 4.1667 1.8583 4.1667 4.1667l0.00028 52.653h-21.742v9.414h-8.694l0.00004 12.586h-36.871l-0.00004-12.586h-8.694v-9.414h-21.742l-0.000336-52.653c-0.000011-2.3083 1.8583-4.1667 4.1667-4.1667z"
+            style="stroke:#0a0a0a;stroke-linecap:square;stroke-width:2.5;fill:#dcdcdc"
+          />
+          <g transform="translate(-.36789 0)">
+            <rect style="stroke:#191919;stroke-linecap:square;fill:#666666" height="22.786" width="3.9062" y="75.747" x="80.556" />
+            <rect style="stroke:#191919;stroke-linecap:square;fill:#666666" height="22.786" width="3.9062" y="75.747" x="153.6" />
+            <rect style="stroke:#191919;stroke-linecap:square;fill:#666666" height="22.786" width="3.9062" y="75.747" x="132.73" />
+            <rect style="stroke:#191919;stroke-linecap:square;fill:#666666" height="22.786" width="3.9062" y="75.747" x="122.3" />
+            <rect style="stroke:#191919;stroke-linecap:square;fill:#666666" height="22.786" width="3.9062" y="75.747" x="111.86" />
+            <rect style="stroke:#191919;stroke-linecap:square;fill:#666666" height="22.786" width="3.9062" y="75.747" x="101.43" />
+            <rect style="stroke:#191919;stroke-linecap:square;fill:#666666" height="22.786" width="3.9062" y="75.747" x="90.991" />
+            <rect style="stroke:#191919;stroke-linecap:square;fill:#666666" height="22.786" width="3.9062" y="75.747" x="143.17" />
+          </g>
+          <rect style="stroke:#0a0a0a;stroke-linecap:square;stroke-width:2;fill:#1dfe0a" height="13.889" width="17.101" y="137.03" x="69.542" />
+          <rect style="stroke:#0a0a0a;stroke-linecap:square;stroke-width:2;fill:#ffd10a" height="13.889" width="17.101" y="137.03" x="150.68" />
+        </symbol>
+        <symbol id="tni-icon-fiber" viewBox="63.027527 93.459824 35.482517 26.080357">
+          <rect
+            style="fill:#3366cc;stroke:none"
+            width="35.482517" height="26.080357" x="63.027527" y="93.459824"
+          />
+          <g transform="translate(0.40159661 0)">
+            <g>
+              <rect style="fill:#1a2952;stroke:none" width="24.993675" height="20.221727" x="68.130211" y="96.105652" />
+              <circle style="fill:#000000;stroke:#3366cc;stroke-width:1.389" cx="80.331192" cy="106.40343" r="4.7430058" />
+              <g transform="translate(0,0.09241676)">
+                <rect style="fill:#3366cc;stroke:none" y="101.09022" x="87.170761" height="10.441592" width="3.6380208" />
+                <rect style="fill:#3366cc;stroke:none" width="1.0866815" height="13.985119" x="89.722099" y="99.318451" />
+              </g>
+              <g transform="matrix(-1,0,0,1,160.66238,0.09241676)">
+                <rect style="fill:#3366cc;stroke:none" width="3.6380208" height="10.441592" x="87.170761" y="101.09022" />
+                <rect style="fill:#3366cc;stroke:none" width="1.0866815" height="13.985119" x="89.722099" y="99.318451" />
+              </g>
+              <rect style="fill:#1a2952;stroke:none" width="6.0003719" height="2.3623512" x="77.626862" y="93.768524" />
+            </g>
+          </g>
+        </symbol>
       </defs>
       <g ref="viewportRef" :transform="`translate(${tx} ${ty}) scale(${zoomLevel})`">
         <g class="tni-graph__edges">
@@ -1174,7 +1250,29 @@ defineExpose({ layout, simNodes, simLinks });
             @mouseleave="onNodeLeave"
             @click="onNodeClick(n.id, $event)"
           >
+            <template v-if="isPortIcon(n)">
+              <rect
+                class="tni-graph__node-shape tni-graph__port-frame"
+                :x="-portBox(n).w / 2 - 1"
+                :y="-portBox(n).h / 2 - 1"
+                :width="portBox(n).w + 2"
+                :height="portBox(n).h + 2"
+                rx="3"
+                ry="3"
+                :style="{ '--port-frame-stroke': portFrameStroke(n) }"
+                fill="var(--tni-bg, #0e0e10)"
+              />
+              <use
+                :href="iconHref(n)"
+                :x="-portBox(n).w / 2"
+                :y="-portBox(n).h / 2"
+                :width="portBox(n).w"
+                :height="portBox(n).h"
+                class="tni-graph__port-icon"
+              />
+            </template>
             <path
+              v-else
               :d="shapeSymbol(n)"
               :fill="nodeFill(n.model)"
               class="tni-graph__node-shape"
@@ -1182,7 +1280,7 @@ defineExpose({ layout, simNodes, simLinks });
             <text
               v-if="labelsVisible"
               class="tni-graph__label"
-              :y="nodeRadius(n.model.type) + 12"
+              :y="(isPortIcon(n) ? portBox(n).h / 2 + 4 : nodeRadius(n.model.type)) + 12"
             >
               {{ nodeLabel(n.model) }}
             </text>
@@ -1515,6 +1613,15 @@ defineExpose({ layout, simNodes, simLinks });
   stroke: var(--tni-fg-muted);
   stroke-width: 1;
   transition: opacity 120ms ease;
+}
+
+.tni-graph__port-frame {
+  stroke: var(--port-frame-stroke, var(--tni-fg-muted));
+  stroke-width: 1.5;
+}
+
+.tni-graph__port-icon {
+  pointer-events: none;
 }
 
 .tni-graph__nodes g {

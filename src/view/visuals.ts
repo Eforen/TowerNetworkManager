@@ -17,7 +17,8 @@ export type NodeShape =
   | 'roundedRect'
   | 'pill'
   | 'pillNumber'
-  | 'cloud';
+  | 'cloud'
+  | 'portIcon';
 
 export type FillFamily =
   | 'physical'
@@ -41,9 +42,9 @@ export const NODE_VISUALS: Record<NodeType, NodeVisual> = {
   server:           { shape: 'square',       radius: 10, family: 'physical' },
   router:           { shape: 'hexagon',      radius: 10, family: 'physical' },
   switch:           { shape: 'diamond',      radius: 10, family: 'physical' },
-  port:             { shape: 'circle',       radius: 4,  family: 'physical' },
-  userport:         { shape: 'circle',       radius: 4,  family: 'customer' },
-  uplink:           { shape: 'circle',       radius: 5,  family: 'physical' },
+  port:             { shape: 'portIcon',     radius: 8,  family: 'physical' },
+  userport:         { shape: 'portIcon',     radius: 8,  family: 'customer' },
+  uplink:           { shape: 'portIcon',     radius: 9,  family: 'physical' },
   floor:            { shape: 'roundedRect',  radius: 16, family: 'floor' },
   rack:             { shape: 'roundedRect',  radius: 14, family: 'rack' },
   customer:         { shape: 'circle',       radius: 9,  family: 'customer' },
@@ -84,6 +85,15 @@ export function fillVar(family: FillFamily): string {
     case 'floor':     return '--tni-floor';
     case 'rack':      return '--tni-rack';
   }
+}
+
+/**
+ * Pick which port icon variant to use for a port/userport/uplink based on
+ * its media tag. Defaults to RJ45 if no recognized media tag is present.
+ */
+export function portIconKey(tags: readonly string[]): 'rj45' | 'fiber' {
+  if (tags.includes('FiberOptic')) return 'fiber';
+  return 'rj45';
 }
 
 // ---------------------------------------------------------------------

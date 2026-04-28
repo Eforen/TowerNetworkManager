@@ -26,7 +26,9 @@ describe('node visuals', () => {
     expect(nodeShape('server')).toBe('square');
     expect(nodeShape('router')).toBe('hexagon');
     expect(nodeShape('switch')).toBe('diamond');
-    expect(nodeShape('port')).toBe('circle');
+    expect(nodeShape('port')).toBe('portIcon');
+    expect(nodeShape('userport')).toBe('portIcon');
+    expect(nodeShape('uplink')).toBe('portIcon');
   });
 
   it('ports are smaller than devices', () => {
