@@ -83,7 +83,5 @@ switch 8686 RJ45[5] traversalsPerTick=25
 port[86110/port4] -> port[8686/port0] :NetworkCableLinkRJ45
 
 ## Backstock
-#Make_Disco #Model_Nano
 router 74218 FIBER[2] RJ45[3] traversalsPerTick=60
-#Make_Disco #Model_Nano
 router 64888 FIBER[2] RJ45[3] traversalsPerTick=60
