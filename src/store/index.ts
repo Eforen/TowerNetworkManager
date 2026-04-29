@@ -6,6 +6,8 @@ export { useFsmStore } from './fsmStore';
 export type { FsmStore } from './fsmStore';
 export { useSelectionStore } from './selectionStore';
 export type { SelectionStore } from './selectionStore';
+export { useDragStore } from './dragStore';
+export type { DragStore, DragTarget } from './dragStore';
 export {
   STORAGE_KEYS,
   QUOTA_WARN_BYTES,

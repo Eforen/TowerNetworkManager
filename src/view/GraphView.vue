@@ -31,6 +31,7 @@ import { zoom, zoomIdentity, type D3ZoomEvent, type ZoomBehavior } from 'd3-zoom
 import { nodeKey } from '@/model';
 import type { Edge, EdgeId, Node as ModelNode, NodeKey } from '@/model';
 import {
+  useDragStore,
   useFsmStore,
   useGraphStore,
   useSelectionStore,
@@ -60,6 +61,7 @@ import {
 const graphStore = useGraphStore();
 const fsmStore = useFsmStore();
 const selection = useSelectionStore();
+const drag = useDragStore();
 
 const rootRef = ref<HTMLDivElement | null>(null);
 const svgRef = ref<SVGSVGElement | null>(null);
@@ -251,6 +253,8 @@ function onNodePointerDown(key: NodeKey, ev: PointerEvent): void {
   cancelPointerDrag?.();
   let movedDuringDrag = false;
 
+  drag.begin({ kind: 'node', key });
+
   if (!reducedMotion) layout.sim.alphaTarget(0.2).restart();
 
   const [px0, py0] = pointer(ev, container);
@@ -288,6 +292,7 @@ function onNodePointerDown(key: NodeKey, ev: PointerEvent): void {
     simNode.fx = null;
     simNode.fy = null;
     tickRev.value++;
+    drag.end();
 
     if (movedDuringDrag) {
       queueMicrotask(() => {
@@ -307,6 +312,7 @@ function onNodePointerDown(key: NodeKey, ev: PointerEvent): void {
     simNode.fx = null;
     simNode.fy = null;
     tickRev.value++;
+    drag.end();
     suppressNodeClick.value = false;
   };
 
@@ -336,6 +342,7 @@ function shiftInspectGraphHoverLocked(): boolean {
 }
 
 function onNodeEnter(key: NodeKey, ev: MouseEvent): void {
+  if (drag.isDragging) return;
   if (shiftInspectGraphHoverLocked()) {
     if (hoverKey.value === key) {
       pointerOverGraphNode.value = true;
@@ -356,6 +363,7 @@ function onNodeEnter(key: NodeKey, ev: MouseEvent): void {
 }
 
 function onNodeMove(ev: MouseEvent): void {
+  if (drag.isDragging) return;
   lastPointerClient.value = { x: ev.clientX, y: ev.clientY };
   if (tooltipVisible.value && !tooltipPinned.value) {
     positionTooltip(ev);
@@ -363,6 +371,7 @@ function onNodeMove(ev: MouseEvent): void {
 }
 
 function onNodeLeave(): void {
+  if (drag.isDragging) return;
   pointerOverGraphNode.value = false;
   if (shiftPhysicallyHeld.value || tooltipPinned.value) return;
   hoverKey.value = null;
@@ -373,6 +382,7 @@ function onNodeLeave(): void {
 }
 
 function onEdgeEnter(l: SimLink, ev: MouseEvent): void {
+  if (drag.isDragging) return;
   if (shiftInspectGraphHoverLocked()) return;
   // Node hover wins if already active (mouse jumped from node to edge
   // under a crowded layout); clear it so the edge owns the tooltip now.
@@ -389,10 +399,12 @@ function onEdgeEnter(l: SimLink, ev: MouseEvent): void {
 }
 
 function onEdgeMove(ev: MouseEvent): void {
+  if (drag.isDragging) return;
   if (tooltipVisible.value && !tooltipPinned.value) positionTooltip(ev);
 }
 
 function onEdgeLeave(): void {
+  if (drag.isDragging) return;
   if (shiftInspectGraphHoverLocked()) return;
   hoverEdgeId.value = null;
   tooltipVisible.value = false;
