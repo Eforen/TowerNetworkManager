@@ -110,11 +110,11 @@ describe('format/serializer – node formatting', () => {
   });
 
   it('parse(example) then serialize emits server capacity props', () => {
-    const path = join(process.cwd(), 'examples/simon_rel_1.tni');
+    const path = join(process.cwd(), 'examples/realistic01.tni');
     const text = readFileSync(path, 'utf8');
     const out = serialize(parse(text).graph);
     expect(out).toMatch(
-      /server 55153 FIBER\[3\] .*cpuTotal=8.*memoryTotal=8.*storageTotal=16.*traversalsPerTick=200/s,
+      /server 55153 FIBER\[3\] .*cpuTotal=24.*memoryTotal=14.*storageTotal=12.*traversalsPerTick=150/s,
     );
   });
 

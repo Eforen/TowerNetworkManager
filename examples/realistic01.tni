@@ -1,0 +1,90 @@
+!tni v1
+
+# Building
+floor f0
+floor f1
+floor f2
+
+
+# Customers
+## Floor 1
+
+customer gripping-chipmunk
+-> floor[f1] :FloorAssignment
+=> networkaddress @f1/c/1
+=> userport 38118 RJ45
+customer free-hyena
+-> floor[f1] :FloorAssignment
+=> networkaddress @f1/c/2
+=> userport 27146 RJ45
+customer fast-dragonfly
+-> floor[f1] :FloorAssignment
+=> networkaddress @f1/c/3
+=> userport 64655 RJ45
+
+## Floor 2
+customer same-millipede
+-> floor[f2] :FloorAssignment
+=> networkaddress @f2/p/1
+=> userport 37295 RJ45
+
+customer sparkling-stingray
+-> floor[f2] :FloorAssignment
+=> networkaddress @f2/c/1
+=> userport 8566 RJ45
+
+customer muddy-chihuahua
+-> floor[f2] :FloorAssignment
+=> networkaddress @f2/c/2
+=> userport 86909 RJ45
+
+
+# Infrastructure
+## Floor 0
+router 39915 RJ45[5] FIBER[5] traversalsPerTick=125
+-> floor[f0] :FloorAssignment
+uplink DPUW FIBER
+-> floor[f0] :FloorAssignment
+-> port[39915/port6] :NetworkCableLinkFiber
+uplink BCGO FIBER
+-> floor[f0] :FloorAssignment
+-> port[39915/port7] :NetworkCableLinkFiber
+server 55153 FIBER[3] cpuTotal=24 storageTotal=12 memoryTotal=14 traversalsPerTick=150
+port[55153/port0] -> port[39915/port5] :NetworkCableLinkRJ45
+
+## Floor 1
+uplink HYHH FIBER
+-> floor[f1] :FloorAssignment
+-> uplink[DPUW] :UplinkConnection
+
+router 26564 FIBER[2] RJ45[3] traversalsPerTick=60
+=> networkaddress @f1/r/1
+-> floor[f1] :FloorAssignment
+port[26564/port0] -> uplink[HYHH] :NetworkCableLinkFiber
+port[26564/port2] -> customer[gripping-chipmunk]>userport :NetworkCableLinkRJ45
+port[26564/port3] -> customer[free-hyena]>userport :NetworkCableLinkRJ45
+port[26564/port4] -> customer[fast-dragonfly]>userport :NetworkCableLinkRJ45
+
+## Floor 2
+uplink MTVW FIBER
+-> floor[f2] :FloorAssignment
+-> uplink[BCGO] :UplinkConnection
+uplink HAAJ RJ45
+-> floor[f2] :FloorAssignment
+router 86110 FIBER[2] RJ45[3] traversalsPerTick=60
+port[86110/port0] -> uplink[MTVW] :NetworkCableLinkFiber
+port[86110/port2] -> customer[same-millipede]>userport :NetworkCableLinkRJ45
+port[86110/port3] -> customer[sparkling-stingray]>userport :NetworkCableLinkRJ45
+port[86110/port4] -> customer[muddy-chihuahua]>userport :NetworkCableLinkRJ45
+=> networkaddress @f2/r/1
+-> floor[f2] :FloorAssignment
+switch 8686 RJ45[5] traversalsPerTick=25
+=> networkaddress @f2/sw/1
+-> floor[f2] :FloorAssignment
+port[86110/port4] -> port[8686/port0] :NetworkCableLinkRJ45
+
+## Backstock
+router 74218 FIBER[2] RJ45[3] traversalsPerTick=60
+-> floor[f0] :FloorAssignment
+router 64888 FIBER[2] RJ45[3] traversalsPerTick=60
+-> floor[f0] :FloorAssignment
