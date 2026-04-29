@@ -42,6 +42,7 @@ customer muddy-chihuahua
 # Infrastructure
 ## Floor 0
 router 39915 RJ45[5] FIBER[5] traversalsPerTick=125
+-> floor[f0] :FloorAssignment
 uplink DPUW FIBER
 -> floor[f0] :FloorAssignment
 -> port[39915/port6] :NetworkCableLinkFiber
@@ -84,4 +85,6 @@ port[86110/port4] -> port[8686/port0] :NetworkCableLinkRJ45
 
 ## Backstock
 router 74218 FIBER[2] RJ45[3] traversalsPerTick=60
+-> floor[f0] :FloorAssignment
 router 64888 FIBER[2] RJ45[3] traversalsPerTick=60
+-> floor[f0] :FloorAssignment
